@@ -16,10 +16,13 @@ BASEDIR="/data/MyBuildInstall"
 # to the new CD.
 EXTRASDIR="$BASEDIR/MyBuild"
 # Seed file
-SEEDFILE="mybuild.seed"
+SEEDFILE="privacyidea.seed"
 
 # Ubuntu ISO image
-CDIMAGE="$BASEDIR/ubuntu-5.10-install-i386.iso"
+CDIMAGE="$BASEDIR/ubuntu-16.04.4-server-amd64.iso"
+
+# Ubuntu distribution
+DIST="xenial"
 
 # Where the ubuntu iso image will be mounted
 CDSOURCEDIR="$BASEDIR/cdsource"
@@ -28,11 +31,12 @@ CDSOURCEDIR="$BASEDIR/cdsource"
 SOURCEDIR="$BASEDIR/source"
 
 # GPG
-GPGKEYNAME="My Organisation Installation Key"
+GPGKEYNAME="PivacyIDEA Installation Key"
 GPGKEYCOMMENT="Package Signing"
-GPGKEYEMAIL="myorg@myorganisation.com"
+GPGKEYEMAIL="packages@netknights.it"
 GPGKEYPHRASE="MyOrg"
 MYGPGKEY="$GPGKEYNAME ($GPGKEYCOMMENT) <$GPGKEYEMAIL>"
+export GNUPGHOME="$BASEDIR/gnupg"
 
 # Package list (dpkg -l) from an installed system.
 PACKAGELIST="$SOURCEDIR/PackageList"
@@ -42,7 +46,7 @@ CDNAME="MyBuild.iso"
 
 # 640x480 PNG with colours as specified in
 # https://wiki.ubuntu.com/USplashCustomizationHowto
-USPLASH="$SOURCEDIR/MyBuildSplash1.png"
+#USPLASH="$SOURCEDIR/MyBuildSplash1.png"
 
 # ------------ End of modifications.
 
@@ -74,7 +78,8 @@ if [ ! -d $SOURCEDIR ]; then mkdir -p $SOURCEDIR; fi
 if [ ! -d $SOURCEDIR/keyring ]; then mkdir -p $SOURCEDIR/keyring; fi
 if [ ! -d $SOURCEDIR/indices ]; then mkdir -p $SOURCEDIR/indices; fi
 if [ ! -d $SOURCEDIR/ubuntu-meta ]; then mkdir -p $SOURCEDIR/ubuntu-meta; fi
-
+if [ ! -d $GNUPGHOME ]; then mkdir -p $GNUPGHOME; fi
+chmod 700 $GNUPGHOME
 
 if [ ! -f $CDIMAGE ]; then
         echo "Cannot find your ubuntu image. Change CDIMAGE path."
@@ -87,8 +92,8 @@ if [ $? -ne 0 ]; then
         echo "No GPG Key found in your keyring."
         echo "Generating a new gpg key ($GPGKEYNAME $GPGKEYCOMMENT) with a passphrase of $GPGKEYPHRASE .."
         echo ""
-        echo "Key-Type: DSA
-Key-Length: 1024
+        echo "Key-Type: RSA
+Key-Length: 2048
 Subkey-Type: ELG-E
 Subkey-Length: 2048
 Name-Real: $GPGKEYNAME
@@ -118,7 +123,7 @@ if [ ! -f $CDSOURCEDIR/md5sum.txt ]; then
                 umount $CDSOURCEDIR
         fi
 
-        mount -o loop $BASEDIR/ubuntu-5.10-install-i386.iso $CDSOURCEDIR/
+        mount -o loop $CDIMAGE $CDSOURCEDIR/
         if [ ! -f $CDSOURCEDIR/md5sum.txt ]; then
                 echo "Mount did not succeed. Exiting."
                 exit
@@ -129,7 +134,7 @@ fi
 if [ ! -f $SOURCEDIR/apt.conf ]; then
         echo -n "No APT.CONF file found... generating one."
         # Try and generate one?
-        cat $CDSOURCEDIR/dists/breezy/Release | egrep -v "^ " | egrep -v "^(Date|MD5Sum|SHA1)" | sed 's/: / "/' | sed 's/^/APT::FTPArchive::Release::/' | sed 's/$/";/' > $SOURCEDIR/apt.conf
+        cat $CDSOURCEDIR/dists/$DIST/Release | egrep -v "^ " | egrep -v "^(Date|MD5Sum|SHA1)" | sed 's/: / "/' | sed 's/^/APT::FTPArchive::Release::/' | sed 's/$/";/' > $SOURCEDIR/apt.conf
         echo "Ok."
 fi
 
@@ -143,9 +148,9 @@ TreeDefault {
 };
 
 BinDirectory \"pool/main\" {
-  Packages \"dists/breezy/main/binary-i386/Packages\";
-  BinOverride \"$SOURCEDIR/indices/override.breezy.main\";
-  ExtraOverride \"$SOURCEDIR/indices/override.breezy.extra2.main\";
+  Packages \"dists/$DIST/main/binary-i386/Packages\";
+  BinOverride \"$SOURCEDIR/indices/override.$DIST.main\";
+  ExtraOverride \"$SOURCEDIR/indices/override.$DIST.extra2.main\";
 };
 
 Default {
@@ -170,8 +175,8 @@ TreeDefault {
 };
 
 BinDirectory \"pool/main\" {
-  Packages \"dists/breezy/main/debian-installer/binary-i386/Packages\";
-  BinOverride \"$SOURCEDIR/indices/override.breezy.main.debian-installer\";
+  Packages \"dists/$DIST/main/debian-installer/binary-i386/Packages\";
+  BinOverride \"$SOURCEDIR/indices/override.$DIST.main.debian-installer\";
 };
 
 Default {
@@ -196,7 +201,7 @@ TreeDefault {
 };
 
 BinDirectory \"pool/extras\" {
-  Packages \"dists/breezy/extras/binary-i386/Packages\";
+  Packages \"dists/$DIST/extras/binary-i386/Packages\";
 };
 
 Default {
@@ -211,8 +216,8 @@ Contents {
 };" > $SOURCEDIR/apt-ftparchive-extras.conf
 fi
 
-if [ ! -f $SOURCEDIR/indices/override.breezy.extra.main ]; then
-        for i in override.breezy.extra.main override.breezy.main override.breezy.main.debian-installer; do
+if [ ! -f $SOURCEDIR/indices/override.$DIST.extra.main ]; then
+        for i in override.$DIST.extra.main override.$DIST.main override.$DIST.main.debian-installer; do
                 cd $SOURCEDIR/indices
                 wget http://archive.ubuntu.com/ubuntu/indices/$i
         done
@@ -220,8 +225,8 @@ fi
 
 # Create a 'fixed' version of the extras.main override package.
 # Idea/Perl by Ferry Hendrikx, 2006
-cat $SOURCEDIR/indices/override.breezy.extra.main | egrep -v ' Task ' > $SOURCEDIR/indices/override.breezy.extra2.main
-cat $CDSOURCEDIR/dists/breezy/main/binary-i386/Packages | perl -e 'while (<>) { chomp; if(/^Package\:\s*(.+)$/) { $pkg=$1; } elsif(/^Task\:\s(.+)$/) { print "$pkg\tTask\t$1\n"; } }' >> $SOURCEDIR/indices/override.breezy.extra2.main
+cat $SOURCEDIR/indices/override.$DIST.extra.main | egrep -v ' Task ' > $SOURCEDIR/indices/override.$DIST.extra2.main
+cat $CDSOURCEDIR/dists/$DIST/main/binary-i386/Packages | perl -e 'while (<>) { chomp; if(/^Package\:\s*(.+)$/) { $pkg=$1; } elsif(/^Task\:\s(.+)$/) { print "$pkg\tTask\t$1\n"; } }' >> $SOURCEDIR/indices/override.$DIST.extra2.main
 
 
 ################## Copy over the source data
@@ -255,7 +260,7 @@ else
                         # NOT Found
                         # Note: Keep a couple of anciliary files
 
-                        grep "Filename: $i" $CDSOURCEDIR/dists/breezy/main/debian-installer/binary-i386/Packages >/dev/null
+                        grep "Filename: $i" $CDSOURCEDIR/dists/$DIST/main/debian-installer/binary-i386/Packages >/dev/null
                         if [ $? -eq 0 ]; then
                                 # Keep the debian-installer files - we need them.
                                 echo "* Keeping special file $FILE"
@@ -377,11 +382,11 @@ cd $BASEDIR/FinalCD
 apt-ftparchive -c $SOURCEDIR/apt.conf generate $SOURCEDIR/apt-ftparchive-deb.conf
 apt-ftparchive -c $SOURCEDIR/apt.conf generate $SOURCEDIR/apt-ftparchive-udeb.conf
 if [ ! -z $EXTRASDIR ]; then
-        if [ ! -f $BASEDIR/FinalCD/dists/breezy/main/binary-i386/Release ]; then                cat $BASEDIR/FinalCD/dists/breezy/main/binary-i386/Release | sed 's/Component: main/Component: extras/' > $BASEDIR/FinalCD/dists/breezy/extras/binary-i386/Release
+        if [ ! -f $BASEDIR/FinalCD/dists/$DIST/main/binary-i386/Release ]; then                cat $BASEDIR/FinalCD/dists/$DIST/main/binary-i386/Release | sed 's/Component: main/Component: extras/' > $BASEDIR/FinalCD/dists/$DIST/extras/binary-i386/Release
         fi
         ## Henrique Haas - check if exsits extras dists directory     
-        if [ ! -d $BASEDIR/finalcd/dists/breezy/extras/binary-i386 ]; then
-                mkdir -p $BASEDIR/finalcd/dists/breezy/extras/binary-i386
+        if [ ! -d $BASEDIR/finalcd/dists/$DIST/extras/binary-i386 ]; then
+                mkdir -p $BASEDIR/finalcd/dists/$DIST/extras/binary-i386
         fi
         apt-ftparchive -c $SOURCEDIR/apt.conf generate $SOURCEDIR/apt-ftparchive-extras.conf
 fi
@@ -390,11 +395,11 @@ fi
 
 
 # Kill the existing release file
-rm -f $BASEDIR/FinalCD/dists/breezy/Release*
+rm -f $BASEDIR/FinalCD/dists/$DIST/Release*
 
-apt-ftparchive -c $SOURCEDIR/apt.conf release dists/breezy/ > $BASEDIR/FinalCD/dists/breezy/Release
+apt-ftparchive -c $SOURCEDIR/apt.conf release dists/$DIST/ > $BASEDIR/FinalCD/dists/$DIST/Release
 
-echo "$GPGKEYPHRASE" | gpg --default-key "$MYGPGKEY" --passphrase-fd 0 --output $BASEDIR/FinalCD/dists/breezy/Release.gpg -ba $BASEDIR/FinalCD/dists/breezy/Release
+echo "$GPGKEYPHRASE" | gpg --default-key "$MYGPGKEY" --passphrase-fd 0 --output $BASEDIR/FinalCD/dists/$DIST/Release.gpg -ba $BASEDIR/FinalCD/dists/$DIST/Release
 echo "OK"
 
 cd $BASEDIR/FinalCD
