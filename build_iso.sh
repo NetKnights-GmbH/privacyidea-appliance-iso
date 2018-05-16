@@ -1,3 +1,4 @@
+#!/bin/bash
 #
 # Script by Leigh Purdie
 #
@@ -14,7 +15,11 @@ BASEDIR="/data/MyBuildInstall"
 
 # This directory will contain files that need to be copied over
 # to the new CD.
-EXTRASDIR="$BASEDIR/MyBuild"
+EXTRASDIR="/home/paul/privacyidea_iso/ExtrasBuild"
+
+# This directory contains extra packages
+EXTRAPKGDIR="$BASEDIR/ExtraPackages"
+
 # Seed file
 SEEDFILE="privacyidea.seed"
 
@@ -23,6 +28,7 @@ CDIMAGE="$BASEDIR/ubuntu-16.04.4-server-amd64.iso"
 
 # Ubuntu distribution
 DIST="xenial"
+ARCH=amd64
 
 # Where the ubuntu iso image will be mounted
 CDSOURCEDIR="$BASEDIR/cdsource"
@@ -31,7 +37,7 @@ CDSOURCEDIR="$BASEDIR/cdsource"
 SOURCEDIR="$BASEDIR/source"
 
 # GPG
-GPGKEYNAME="PivacyIDEA Installation Key"
+GPGKEYNAME="PrivacyIDEA Installation Key"
 GPGKEYCOMMENT="Package Signing"
 GPGKEYEMAIL="packages@netknights.it"
 GPGKEYPHRASE="MyOrg"
@@ -68,16 +74,12 @@ fi
 # Create a few directories.
 if [ ! -d $BASEDIR ]; then mkdir -p $BASEDIR; fi
 if [ ! -d $BASEDIR/FinalCD ]; then mkdir -p $BASEDIR/FinalCD; fi
-if [ ! -z $EXTRASDIR ]; then
-        if [ ! -d $EXTRASDIR ]; then mkdir -p $EXTRASDIR; fi
-        if [ ! -d $EXTRASDIR/preseed ]; then mkdir -p $EXTRASDIR/preseed; fi
-        if [ ! -d $EXTRASDIR/pool/extras ]; then mkdir -p $EXTRASDIR/pool/extras; fi
-fi
 if [ ! -d $CDSOURCEDIR ]; then mkdir -p $CDSOURCEDIR; fi
 if [ ! -d $SOURCEDIR ]; then mkdir -p $SOURCEDIR; fi
 if [ ! -d $SOURCEDIR/keyring ]; then mkdir -p $SOURCEDIR/keyring; fi
 if [ ! -d $SOURCEDIR/indices ]; then mkdir -p $SOURCEDIR/indices; fi
 if [ ! -d $SOURCEDIR/ubuntu-meta ]; then mkdir -p $SOURCEDIR/ubuntu-meta; fi
+if [ ! -d $SOURCEDIR/squashfs ]; then mkdir -p $SOURCEDIR/squashfs; fi
 if [ ! -d $GNUPGHOME ]; then mkdir -p $GNUPGHOME; fi
 chmod 700 $GNUPGHOME
 
@@ -102,7 +104,7 @@ Name-Email: $GPGKEYEMAIL
 Expire-Date: 0
 Passphrase: $GPGKEYPHRASE" > $BASEDIR/key.inc
 
-        gpg --gen-key --batch --gen-key $BASEDIR/key.inc
+        gpg --batch --gen-key $BASEDIR/key.inc
         # Note: If you wish to remove the passphrase from the key:
         # (Don't do this if you want to use this key for ANYTHING other
         # than a temporary ubuntu CD installation signing key)
@@ -114,6 +116,11 @@ Passphrase: $GPGKEYPHRASE" > $BASEDIR/key.inc
         # y
         # quit
         # y
+fi
+MYGPGKEYID=$(gpg -k --with-colons "$GPGKEYNAME" | awk -F: '/^pub:/ {print substr($5, 9, 16)}')
+if [[ -z $MYGPGKEYID ]]; then
+    echo "Creation of GPG Key failed. Exiting."
+    exit
 fi
 
 if [ ! -f $CDSOURCEDIR/md5sum.txt ]; then
@@ -134,7 +141,9 @@ fi
 if [ ! -f $SOURCEDIR/apt.conf ]; then
         echo -n "No APT.CONF file found... generating one."
         # Try and generate one?
-        cat $CDSOURCEDIR/dists/$DIST/Release | egrep -v "^ " | egrep -v "^(Date|MD5Sum|SHA1)" | sed 's/: / "/' | sed 's/^/APT::FTPArchive::Release::/' | sed 's/$/";/' > $SOURCEDIR/apt.conf
+        cat $CDSOURCEDIR/dists/$DIST/Release | egrep -v "^( |Date|MD5Sum|SHA1|SHA256)" | sed 's/: / "/' | \
+            sed 's/^/APT::FTPArchive::Release::/' | sed 's/$/";/' | sed 's/\(::Architectures\).*/\1 "amd64";/' | \
+            sed 's/\(::Components ".*\)"/\1 extras"/' > $SOURCEDIR/apt.conf
         echo "Ok."
 fi
 
@@ -148,9 +157,9 @@ TreeDefault {
 };
 
 BinDirectory \"pool/main\" {
-  Packages \"dists/$DIST/main/binary-i386/Packages\";
+  Packages \"dists/$DIST/main/binary-$ARCH/Packages\";
   BinOverride \"$SOURCEDIR/indices/override.$DIST.main\";
-  ExtraOverride \"$SOURCEDIR/indices/override.$DIST.extra2.main\";
+  ExtraOverride \"$SOURCEDIR/indices/override.$DIST.extra.main\";
 };
 
 Default {
@@ -175,7 +184,7 @@ TreeDefault {
 };
 
 BinDirectory \"pool/main\" {
-  Packages \"dists/$DIST/main/debian-installer/binary-i386/Packages\";
+  Packages \"dists/$DIST/main/debian-installer/binary-$ARCH/Packages\";
   BinOverride \"$SOURCEDIR/indices/override.$DIST.main.debian-installer\";
 };
 
@@ -201,7 +210,8 @@ TreeDefault {
 };
 
 BinDirectory \"pool/extras\" {
-  Packages \"dists/$DIST/extras/binary-i386/Packages\";
+  Packages \"dists/$DIST/extras/binary-$ARCH/Packages\";
+  ExtraOverride \"$SOURCEDIR/indices/override.$DIST.extra.main\";
 };
 
 Default {
@@ -223,10 +233,11 @@ if [ ! -f $SOURCEDIR/indices/override.$DIST.extra.main ]; then
         done
 fi
 
+# TODO: Do we need this?
 # Create a 'fixed' version of the extras.main override package.
 # Idea/Perl by Ferry Hendrikx, 2006
-cat $SOURCEDIR/indices/override.$DIST.extra.main | egrep -v ' Task ' > $SOURCEDIR/indices/override.$DIST.extra2.main
-cat $CDSOURCEDIR/dists/$DIST/main/binary-i386/Packages | perl -e 'while (<>) { chomp; if(/^Package\:\s*(.+)$/) { $pkg=$1; } elsif(/^Task\:\s(.+)$/) { print "$pkg\tTask\t$1\n"; } }' >> $SOURCEDIR/indices/override.$DIST.extra2.main
+#cat $SOURCEDIR/indices/override.$DIST.extra.main | egrep -v ' Task ' > $SOURCEDIR/indices/override.$DIST.extra2.main
+#cat $CDSOURCEDIR/dists/$DIST/main/binary-i386/Packages | perl -e 'while (<>) { chomp; if(/^Package\:\s*(.+)$/) { $pkg=$1; } elsif(/^Task\:\s(.+)$/) { print "$pkg\tTask\t$1\n"; } }' >> $SOURCEDIR/indices/override.$DIST.extra2.main
 
 
 ################## Copy over the source data
@@ -260,7 +271,7 @@ else
                         # NOT Found
                         # Note: Keep a couple of anciliary files
 
-                        grep "Filename: $i" $CDSOURCEDIR/dists/$DIST/main/debian-installer/binary-i386/Packages >/dev/null
+                        zgrep "Filename: $i" $CDSOURCEDIR/dists/$DIST/main/debian-installer/binary-$ARCH/Packages.gz >/dev/null
                         if [ $? -eq 0 ]; then
                                 # Keep the debian-installer files - we need them.
                                 echo "* Keeping special file $FILE"
@@ -279,38 +290,69 @@ fi
 echo -n "Generating keyfile..   "
 
 cd $SOURCEDIR/keyring
-KEYRING=`find * -maxdepth 1 -name "ubuntu-keyring*" -type d -print`
+KEYRING=`find $SOURCEDIR/keyring -maxdepth 1 -name "ubuntu-keyring*" -type d -print`
 if [ -z "$KEYRING" ]; then
+    # TODO: should we run apt-get update before?
+    # TODO: this throws some warnings about missing keys and running as root
         apt-get source ubuntu-keyring
-        KEYRING=`find * -maxdepth 1 -name "ubuntu-keyring*" -type d -print`
+        KEYRING=`find $SOURCEDIR/keyring -maxdepth 1 -name "ubuntu-keyring*" -type d -print`
         if [ -z "$KEYRING" ]; then
                 echo "Cannot grab keyring source! Exiting."
                 exit
         fi
 fi
 
-cd $SOURCEDIR/keyring/$KEYRING/keyrings
-gpg --import < ubuntu-archive-keyring.gpg >/dev/null
-rm -f ubuntu-archive-keyring.gpg
-gpg --output=ubuntu-archive-keyring.gpg --export FBB75451 437D05B5 "$GPGKEYNAME" >/dev/null
-cd ..
-dpkg-buildpackage -rfakeroot -m"$MYGPGKEY" -k"$MYGPGKEY" >/dev/null
-rm -f $BASEDIR/FinalCD/pool/main/u/ubuntu-keyring/*
-cp ../ubuntu-keyring*deb $BASEDIR/FinalCD/pool/main/u/ubuntu-keyring/
-if [ $? -gt 0 ]; then
-        echo "Cannot copy the modified ubuntu-keyring over to the pool/main folder. Exiting."
-        exit
+cd $KEYRING/keyrings
+# TODO: this is a dirty hack to get the imported key ids
+KEYIDS=$(LANG=C gpg --import < ubuntu-archive-keyring.gpg 2>&1 | awk '{if($2~"key"){gsub(/:$/, "",$3); print $3}}' | tr '\n' ' ')
+# check if we already have a key
+if [[ ! $KEYIDS =~ (^| )$MYGPGKEYID($| ) ]]; then
+	rm -f ubuntu-archive-keyring.gpg
+	gpg --output=ubuntu-archive-keyring.gpg --export $KEYIDS $MYGPGKEYID
+	cd ..
+	debuild -k"$MYGPGKEYID" -p"gpg --passphrase $GPGKEYPHRASE"
+	rm -f $BASEDIR/FinalCD/pool/main/u/ubuntu-keyring/*
+	cp ../ubuntu-keyring*deb $BASEDIR/FinalCD/pool/main/u/ubuntu-keyring/
+	if [ $? -gt 0 ]; then
+        	echo "Cannot copy the modified ubuntu-keyring over to the pool/main folder. Exiting."
+        	exit
+	fi
 fi
+echo "OK"
+
+# TODO: check if package content changed so we don't need to rebuild squashfs
+################## Update and rebuild squashfs
+
+echo "Generating SquashFS..."
+
+cd $SOURCEDIR/squashfs
+rm -rf squashfs-root
+unsquashfs $CDSOURCEDIR/install/filesystem.squashfs
+# copy the generated keyring with our key to several locations
+cp $KEYRING/keyrings/ubuntu-archive-keyring.gpg squashfs-root/usr/share/keyrings/ubuntu-archive-keyring.gpg
+cp $KEYRING/keyrings/ubuntu-archive-keyring.gpg squashfs-root/etc/apt/trusted.gpg
+cp $KEYRING/keyrings/ubuntu-archive-keyring.gpg squashfs-root/var/lib/apt/keyrings/ubuntu-archive-keyring.gpg
+# get the new squashfs size
+du -sx --block-size=1 squashfs-root/ | cut -f1 > $BASEDIR/FinalCD/install/filesystem.size
+# create the new squashfs
+rm -f $BASEDIR/FinalCD/install/filesystem.squashfs
+mksquashfs squashfs-root $BASEDIR/FinalCD/install/filesystem.squashfs
+# and sign it
+rm -f $BASEDIR/FinalCD/install/filesystem.squashfs.gpg
+gpg --batch --passphrase $GPGKEYPHRASE --output $BASEDIR/FinalCD/install/filesystem.squashfs.gpg -ab $BASEDIR/FinalCD/install/filesystem.squashfs
 
 echo "OK"
 
-
 ################## Copy over the extra packages (if any)
+if [ ! -z $EXTRAPKGDIR ]; then
+	rsync -az --delete $EXTRAPKGDIR/ $BASEDIR/FinalCD/pool/extras/
+fi
+
 if [ ! -z $EXTRASDIR ]; then
         echo -n "Copying Extra files...  "
         rsync -az $EXTRASDIR/ $BASEDIR/FinalCD/
-        echo "OK"
 
+	# TODO: generate in FinalCD folder
         if [ ! -f "$EXTRASDIR/preseed/$SEEDFILE" ]; then
                 echo "No seed file found. Creating one in $EXTRASDIR/preseed/$SEEDFILE."
                 echo "- You will probably want to modify this file."
@@ -381,17 +423,18 @@ cd $BASEDIR/FinalCD
 
 apt-ftparchive -c $SOURCEDIR/apt.conf generate $SOURCEDIR/apt-ftparchive-deb.conf
 apt-ftparchive -c $SOURCEDIR/apt.conf generate $SOURCEDIR/apt-ftparchive-udeb.conf
-if [ ! -z $EXTRASDIR ]; then
-        if [ ! -f $BASEDIR/FinalCD/dists/$DIST/main/binary-i386/Release ]; then                cat $BASEDIR/FinalCD/dists/$DIST/main/binary-i386/Release | sed 's/Component: main/Component: extras/' > $BASEDIR/FinalCD/dists/$DIST/extras/binary-i386/Release
+if [ ! -z $EXTRAPKGDIR ]; then
+	if [ ! -d $BASEDIR/FinalCD/dists/$DIST/extras/binary-$ARCH/ ]; then
+		mkdir -p $BASEDIR/FinalCD/dists/$DIST/extras/binary-$ARCH
+	fi
+        if [ ! -f $BASEDIR/FinalCD/dists/$DIST/extras/binary-$ARCH/Release ]; then
+        	cat $BASEDIR/FinalCD/dists/$DIST/main/binary-$ARCH/Release | sed 's/Component: main/Component: extras/' > $BASEDIR/FinalCD/dists/$DIST/extras/binary-$ARCH/Release
         fi
-        ## Henrique Haas - check if exsits extras dists directory     
-        if [ ! -d $BASEDIR/finalcd/dists/$DIST/extras/binary-i386 ]; then
-                mkdir -p $BASEDIR/finalcd/dists/$DIST/extras/binary-i386
-        fi
+	if [ ! -f $BASEDIR/FinalCD/dists/$DIST/extras/binary-$ARCH/Packages ]; then
+		apt-ftparchive -c $SOURCEDIR/apt.conf packages $BASEDIR/FinalCD/pool/extras $SOURCEDIR/indices/override.xenial.main > $BASEDIR/FinalCD/dists/$DIST/extras/binary-$ARCH/Packages
+	fi
         apt-ftparchive -c $SOURCEDIR/apt.conf generate $SOURCEDIR/apt-ftparchive-extras.conf
 fi
-
-
 
 
 # Kill the existing release file
@@ -411,12 +454,12 @@ echo "OK"
 
 cd $BASEDIR/FinalCD
 echo "Creating and ISO image..."
-mkisofs -b isolinux/isolinux.bin -c isolinux/boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table -J -hide-rr-moved -o $BASEDIR/$CDNAME -R $BASEDIR/FinalCD/
+mkisofs -b isolinux/isolinux.bin -c isolinux/boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table -J -hide-rr-moved -V PrivacyIDEA_Appliance -o $BASEDIR/$CDNAME -R $BASEDIR/FinalCD/
 
 echo "CD Available in $BASEDIR/$CDNAME"
 echo "You can now remove all files in:"
 echo " - $BASEDIR/FinalCD"
 
 # Unmount the old CD
-umount $CDSOURCEDIR
+#umount $CDSOURCEDIR
 
