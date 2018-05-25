@@ -1,3 +1,14 @@
+
+d-i preseed/early_command string anna-install console-setup-udeb
+
+### Unattended Installation
+d-i auto-install/enable boolean true
+d-i debconf/priority select critical
+
+# disable keyboard detection
+d-i console-setup/ask_detect boolean false
+d-i console-setup/ask_detect seen true
+
 # enable root login
 d-i passwd/root-login boolean true
 
@@ -8,18 +19,27 @@ d-i passwd/make-user boolean false
 # Suggest crypto LVM by default.
 #d-i	partman-auto/init_automatically_partition	select some_device_crypto
 #d-i	partman-auto/init_automatically_partition	seen false
+
+
+#d-i partman-auto/init_automatically_partition select biggest_free
+
 # You can choose one of the three predefined partitioning recipes:
 # - atomic: all files in one partition
 # - home:   separate /home partition
 # - multi:  separate /home, /var, and /tmp partitions
-d-i partman-auto/choose_recipe select atomic
+#d-i partman-auto/choose_recipe select atomic
+
+# use the first disk
+#d-i partman-auto/disk string /dev/sda
 
 # This makes partman automatically partition without confirmation, provided
 # that you told it what to do using one of the methods above.
+d-i partman-auto/method string regular
 d-i partman-partitioning/confirm_write_new_label boolean true
 d-i partman/choose_partition select finish
 d-i partman/confirm boolean true
 d-i partman/confirm_nooverwrite boolean true
+d-i partman-basicmethods/method_only boolean false
 
 ### Mirror settings
 #d-i mirror/http/hostname string ppa.launchpad.net
@@ -28,17 +48,18 @@ d-i partman/confirm_nooverwrite boolean true
 
 # Install the Ubuntu Server.
 tasksel	tasksel/first	multiselect	server, openssh-server
-d-i	pkgsel/include	string	mysql-server
+d-i	pkgsel/include	string	mysql-server, apache2, aptitude, freeradius, tinc, libapache2-mod-wsgi
 # Only install basic language packs. Let tasksel ask about tasks.
 #d-i	pkgsel/language-pack-patterns	string
 # No language support packages.
-d-i	pkgsel/install-language-support	boolean false
+#d-i	pkgsel/install-language-support	boolean false
 
 # Automatically download and install stable updates?
 unattended-upgrades     unattended-upgrades/enable_auto_updates boolean false
+d-i pkgsel/update-policy select none
 
 # Detecting your keyboard layout
-#keyboard-configuration  console-setup/detect    detect-keyboard
+#keyboard-configuration  console-setup/detect    detect-keyboard 
 
 # Only ask the UTC question if there are other operating systems installed.
 d-i	clock-setup/utc-auto	boolean true
@@ -64,12 +85,12 @@ d-i 	grub-installer/bootdev	string	default
 #oem-config	oem-config/steps	multiselect language, timezone, keyboard, user, network, tasks
 
 # allow root login via ssh (needed for privacyIDEA replication)
-# TODO: This does not work since debconf/postinst will change this to "prohibit-password". We'll have to fix this in a final script
+# debconf/postinst will change this to "prohibit-password". We'll fix this in a final script
 openssh-server  openssh-server/permit-root-login        boolean true
 
 # empty password for MySQL:
-mysql-server-5.7        mysql-server/root_password      password
-mysql-server-5.7        mysql-server/root_password_again        password
+mysql-server-5.7        mysql-server/root_password      password	
+mysql-server-5.7        mysql-server/root_password_again        password	
 
 # Don't call canonical
 popularity-contest popularity-contest/participate boolean false
@@ -82,4 +103,4 @@ d-i finish-install/reboot_in_progress note
 # directly, or use the apt-install and in-target commands to easily install
 # packages and run commands in the target system.
 #d-i preseed/late_command string apt-install zsh; in-target chsh -s /bin/zsh
-d-i preseed/late_command string in-target sed -i -e 's/\(^PermitRootLogin\).*$/\1 yes/' /etc/ssh/sshd_config
+d-i preseed/late_command string cp -a /cdrom/scripts/final_script.sh /target/usr/sbin; in-target /bin/bash /usr/sbin/final_script.sh;

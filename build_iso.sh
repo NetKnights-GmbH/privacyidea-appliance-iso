@@ -24,14 +24,12 @@ OPTIND=1
 OPTIONS="h?vw:b:i:"
 
 print_usage() {
-    echo "Usage: $0 [-h/-?] [-w <working directory>] [-b <base directory>] [-i <base iso-file>]";
+    echo "Usage: $0 [-h/-?] [-w <working directory>] [-e <extras directory>] [-i <base iso-file>]";
     exit 1;
 }
 
-# The Base Directory
-WORKDIR=$(mktemp -d)
 # This directory will contain files that need to be copied over to the new CD.
-EXTRASDIR=$(dirname $0)
+EXTRASDIR=$(readlink -f $(dirname $0))
 # Ubuntu ISO image
 CDIMAGE="ubuntu-16.04.4-server-amd64.iso"
 
@@ -40,13 +38,13 @@ verbose=0
 while getopts $OPTIONS o; do
     case "${o}" in
         w)
-            WORKDIR=${OPTARG}
+            WORKDIR=$(readlink -f ${OPTARG})
             ;;
         b)
-            EXTRASDIR=${OPTARG}
+            EXTRASDIR=$(readlink -f ${OPTARG})
             ;;
 	i)
-	    CDIMAGE=${OPTARG}
+	    CDIMAGE=$(readlink -f ${OPTARG})
 	    ;;
 	h|\?)
 	    print_usage
@@ -60,14 +58,17 @@ while getopts $OPTIONS o; do
     esac
 done
 
-if [ $verbose == 1 ]; then
-    echo "Settings:";
-    echo "   WORKDIR: $WORKDIR";
-    echo "   EXTRASDIR: $EXTRASDIR";
-    echo "   CDIMAGE: $CDIMAGE";
+# The Base Directory
+if [[ -z $WORKDIR ]]; then
+    WORKDIR=$(mktemp -d)
 fi
 
-exit 0
+echo "Settings:";
+echo "=========";
+echo "   WORKDIR: $WORKDIR";
+echo "   EXTRASDIR: $EXTRASDIR";
+echo "   CDIMAGE: $CDIMAGE";
+
 
 # file with extra package names
 EXTRA_PKG_LIST=$EXTRASDIR/extra_packages.txt
@@ -145,34 +146,45 @@ if [[ -f $EXTRA_PKG_LIST ]]; then
     [[ ! -d $EXTRAPKGDIR ]] && mkdir -p $EXTRAPKGDIR
 fi
 
-# Check if a gpg-key already exists in the keyring, otherwise create it
-gpg --list-keys | grep "$GPGKEYNAME" >/dev/null
-if [ $? -ne 0 ]; then
-    echo "No GPG Key found in your keyring."
-    echo "Generating a new gpg key ($GPGKEYNAME $GPGKEYCOMMENT) with a passphrase of $GPGKEYPHRASE .."
-    echo ""
-    echo "Key-Type: RSA
-Key-Length: 2048
-Subkey-Type: ELG-E
-Subkey-Length: 2048
-Name-Real: $GPGKEYNAME
-Name-Comment: $GPGKEYCOMMENT
-Name-Email: $GPGKEYEMAIL
-Expire-Date: 0
-Passphrase: $GPGKEYPHRASE" > $WORKDIR/key.inc
+echo ""
 
-    gpg --batch --gen-key $WORKDIR/key.inc
-fi
-# get the keyid of the key
+################## GPG Setup
+
+# add some gpg preferences
+cat << 'EOF' > $GNUPGHOME/gpg.conf
+personal-digest-preferences SHA512
+cert-digest-algo SHA512
+default-preference-list SHA512 SHA384 SHA256 SHA224 AES256 AES192 AES CAST5 ZLIB BZIP2 ZIP Uncompressed
+EOF
+chmod 600 $GNUPGHOME/gpg.conf
+
+# Check if a gpg-key already exists in the keyring, otherwise create it
 MYGPGKEYID=$(gpg -k --with-colons "$GPGKEYNAME" | awk -F: '/^pub:/ {print substr($5, 9, 16)}')
 if [[ -z $MYGPGKEYID ]]; then
-    echo "Creation of GPG Key failed. Exiting."
-    exit
+    echo "No GPG Key found in your keyring."
+    echo "Generating a new gpg key ($GPGKEYNAME $GPGKEYCOMMENT) with passphrase \"$GPGKEYPHRASE\" ..."
+    echo ""
+    cat <<- EOF > $WORKDIR/key.inc
+	Key-Type: RSA
+	Key-Length: 2048
+	Subkey-Type: ELG-E
+	Subkey-Length: 2048
+	Name-Real: $GPGKEYNAME
+	Name-Comment: $GPGKEYCOMMENT
+	Name-Email: $GPGKEYEMAIL
+	Expire-Date: 0
+	Passphrase: $GPGKEYPHRASE
+	EOF
+    gpg --batch --gen-key $WORKDIR/key.inc
+    MYGPGKEYID=$(gpg -k --with-colons "$GPGKEYNAME" | awk -F: '/^pub:/ {print substr($5, 9, 16)}')
+else
+    echo "GPG Key for \"$GPGKEYNAME\" with keyid \"$MYGPGKEYID\" found in keyring."
 fi
 
-# mount the source cd image
+################## Mount the source CD image
+echo ""
 if [ ! -f $CDSOURCEDIR/md5sum.txt ]; then
-    echo -n "Mounting Ubuntu iso.. "
+    echo -n "Mounting Ubuntu iso... "
     mount | grep $CDSOURCEDIR
     if [ $? -eq 0 ]; then
         umount $CDSOURCEDIR
@@ -186,13 +198,16 @@ if [ ! -f $CDSOURCEDIR/md5sum.txt ]; then
     echo "OK"
 fi
 
+################## Setup APT configuration
+
 if [ ! -f $SOURCEDIR/apt.conf ]; then
-    echo -n "No APT.CONF file found... generating one."
+    echo ""
+    echo -n "No APT.CONF file found. Generating one... "
     # Try and generate one?
     cat $CDSOURCEDIR/dists/$DIST/Release | egrep -v "^( |Date|MD5Sum|SHA1|SHA256)" | sed 's/: / "/' | \
         sed 's/^/APT::FTPArchive::Release::/' | sed 's/$/";/' | sed 's/\(::Architectures\).*/\1 "amd64";/' | \
         sed 's/\(::Components ".*\)"/\1 extras"/' > $SOURCEDIR/apt.conf
-    echo "Ok."
+    echo "OK."
 fi
 
 if [ ! -f $SOURCEDIR/apt-ftparchive-deb.conf ]; then
@@ -282,7 +297,7 @@ if [ ! -f $SOURCEDIR/indices/override.$DIST.extra.main ]; then
 fi
 
 ################## Copy over the source data
-
+echo ""
 echo -n "Resyncing old data...  "
 
 cd $WORKDIR/FinalCD
@@ -292,9 +307,10 @@ echo "OK"
 
 ################## Remove packages that we no longer require
 
+echo ""
 # PackageList is a dpkg -l from our 'build' server.
 if [ ! -f $PACKAGELIST ]; then
-    echo "No PackageList found. Assuming that you do not require any packages to be removed"
+    echo "No PackageList found. Assuming that you do not require any packages to be removed."
 else
     cat $PACKAGELIST | grep "^ii" | awk '{print $2 "_" $3}' > $SOURCEDIR/temppackages
 
@@ -328,8 +344,8 @@ else
 fi
 
 ################## Create the ubuntu keyring package
-echo -n "Generating keyfile..   "
-
+echo ""
+echo -n "Generating keyfile...  "
 cd $SOURCEDIR/keyring
 KEYRING=`find $SOURCEDIR/keyring -maxdepth 1 -name "ubuntu-keyring*" -type d -print`
 if [ -z "$KEYRING" ]; then
@@ -361,36 +377,68 @@ if [[ ! $KEYIDS =~ (^| )$MYGPGKEYID($| ) ]]; then
 fi
 echo "OK"
 
+
 ################## Update and rebuild squashfs
 # TODO: check if package content changed so we don't need to rebuild squashfs
 #       unfortunately we already synched the source cd content, so we should check before...
-
-echo "Generating SquashFS..."
+echo ""
+echo -n "Generating SquashFS... "
 
 cd $SOURCEDIR/squashfs
-rm -rf squashfs-root
-unsquashfs $CDSOURCEDIR/install/filesystem.squashfs
-# copy the generated keyring with our key to several locations
-cp $KEYRING/keyrings/ubuntu-archive-keyring.gpg squashfs-root/usr/share/keyrings/ubuntu-archive-keyring.gpg
-cp $KEYRING/keyrings/ubuntu-archive-keyring.gpg squashfs-root/etc/apt/trusted.gpg
-cp $KEYRING/keyrings/ubuntu-archive-keyring.gpg squashfs-root/var/lib/apt/keyrings/ubuntu-archive-keyring.gpg
-# get the new squashfs size
-du -sx --block-size=1 squashfs-root/ | cut -f1 > $WORKDIR/FinalCD/install/filesystem.size
-# create the new squashfs
-rm -f $WORKDIR/FinalCD/install/filesystem.squashfs
-mksquashfs squashfs-root $WORKDIR/FinalCD/install/filesystem.squashfs
-# and sign it
-rm -f $WORKDIR/FinalCD/install/filesystem.squashfs.gpg
-gpg --batch --passphrase $GPGKEYPHRASE --output $WORKDIR/FinalCD/install/filesystem.squashfs.gpg -ab $WORKDIR/FinalCD/install/filesystem.squashfs
+# check if we already have a rebuild squashfs
+# get the current md5sum of the ubuntu-archive-keyring.gpg file
+REBUILD_SQUASHFS=0
+MD5SUM_KEYRING=$(md5sum $KEYRING/keyrings/ubuntu-archive-keyring.gpg | awk '{print $1}')
+SQUASH_KEYRING_FILES="squashfs-root/usr/share/keyrings/ubuntu-archive-keyring.gpg squashfs-root/etc/apt/trusted.gpg squashfs-root/var/lib/apt/keyrings/ubuntu-archive-keyring.gpg"
+for i in $SQUASH_KEYRING_FILES; do
+    if ! echo "$MD5SUM_KEYRING  $i" | md5sum -c --quiet - 2>&1 > /dev/null; then
+        REBUILD_SQUASHFS=1
+        break
+    fi
+done
 
+# check if all needed files are pressent
+SQUASHFS_FILES="filesystem.squashfs filesystem.squashfs.gpg filesystem.size filesystem.manifest"
+for i in $SQUASHFS_FILES; do
+    if [[ ! -f $i ]]; then
+        REBUILD_SQUASHFS=1
+        break
+    fi
+done
+
+if [[ $REBUILD_SQUASHFS == 1 ]]; then
+    echo -n "  Need to rebuild squashfs... "
+    rm -rf squashfs-root
+    unsquashfs $CDSOURCEDIR/install/filesystem.squashfs
+    # copy the generated keyring with our key to several locations
+    for i in $SQUASH_KEYRING_FILES; do
+        cp $KEYRING/keyrings/ubuntu-archive-keyring.gpg $i
+    done
+    # get the new squashfs size
+    du -sx --block-size=1 squashfs-root/ | cut -f1 > filesystem.size
+    # get the filesystem manifest
+    chroot squashfs-root/ dpkg-query -W --showformat='${binary:Package}\t${Version}\n' > filesystem.manifest
+    # create the new squashfs
+    mksquashfs squashfs-root filesystem.squashfs
+    # and sign it
+    gpg --batch --passphrase $GPGKEYPHRASE --output filesystem.squashfs.gpg -ab filesystem.squashfs
+
+    echo "  Done"
+fi
+
+# We just assume here that all squashfs files are generated correctly
+cp -a filesystem.* $WORKDIR/FinalCD/install/
 echo "OK"
 
 
 ################## Download/Update and copy the extra packages (if any)
+echo ""
 if [[ -d $EXTRAPKGDIR ]]; then
+    echo -n "Downloading extra packages... "
     cd $EXTRAPKGDIR
     apt-get download $(cat $EXTRA_PKG_LIST)
     rsync -az --delete $EXTRAPKGDIR/ $WORKDIR/FinalCD/pool/extras/
+    echo "OK"
 fi
 
 if [ -d $EXTRASDIR/ExtrasBuild ]; then
@@ -400,38 +448,42 @@ if [ -d $EXTRASDIR/ExtrasBuild ]; then
     if [ ! -f "$EXTRASDIR/ExtrasBuild/isolinux/isolinux.cfg" ]; then
         cat $CDSOURCEDIR/isolinux/isolinux.cfg | sed "s/^APPEND.*/APPEND   preseed\/file=\/cdrom\/preseed\/$SEEDFILE vga=normal initrd=\/install\/initrd.gz ramdisk_size=16384 root=\/dev\/rd\/0 DEBCONF_PRIORITY=critical debconf\/priority=critical rw --/" > $WORKDIR/FinalCD/isolinux/isolinux.cfg
     fi
-
     echo "OK"
 fi
 
 
-echo "Creating apt package list.."
+echo ""
+echo -n "Creating apt package list... "
 cd $WORKDIR/FinalCD
 
-apt-ftparchive -c $SOURCEDIR/apt.conf generate $SOURCEDIR/apt-ftparchive-deb.conf
-apt-ftparchive -c $SOURCEDIR/apt.conf generate $SOURCEDIR/apt-ftparchive-udeb.conf
+apt-ftparchive -qq -c $SOURCEDIR/apt.conf generate $SOURCEDIR/apt-ftparchive-deb.conf
+apt-ftparchive -qq -c $SOURCEDIR/apt.conf generate $SOURCEDIR/apt-ftparchive-udeb.conf
 if [ -d $EXTRAPKGDIR ]; then
-    EXRAS_DISTDIR="$WORKDIR/FinalCD/dists/$DIST/extras/binary-$ARCH"
+    EXTRAS_DISTDIR="$WORKDIR/FinalCD/dists/$DIST/extras/binary-$ARCH"
     if [ ! -d $EXTRAS_DISTDIR ]; then
         mkdir -p $EXTRAS_DISTDIR
     fi
     if [ ! -f $EXTRAS_DISTDIR/Release ]; then
-        cat $EXTRAS_DISTDIR/Release | sed 's/Component: main/Component: extras/' > $EXTRAS_DISTDIR/Release
+        cat $WORKDIR/FinalCD/dists/$DIST/main/binary-$ARCH/Release | sed 's/Component: main/Component: extras/' > $EXTRAS_DISTDIR/Release
     fi
     if [ ! -f $EXTRAS_DISTDIR/Packages ]; then
-        apt-ftparchive -c $SOURCEDIR/apt.conf packages $WORKDIR/FinalCD/pool/extras $SOURCEDIR/indices/override.xenial.main > $EXTRAS_DISTDIR/Packages
+        apt-ftparchive -qq -c $SOURCEDIR/apt.conf packages $WORKDIR/FinalCD/pool/extras $SOURCEDIR/indices/override.xenial.main > $EXTRAS_DISTDIR/Packages
     fi
-    apt-ftparchive -c $SOURCEDIR/apt.conf generate $SOURCEDIR/apt-ftparchive-extras.conf
+    apt-ftparchive -qq -c $SOURCEDIR/apt.conf generate $SOURCEDIR/apt-ftparchive-extras.conf
 fi
 
 
 # Kill the existing release file
 rm -f $WORKDIR/FinalCD/dists/$DIST/Release*
 
-apt-ftparchive -c $SOURCEDIR/apt.conf release dists/$DIST/ > $WORKDIR/FinalCD/dists/$DIST/Release
+apt-ftparchive -qq -c $SOURCEDIR/apt.conf release dists/$DIST/ > $WORKDIR/FinalCD/dists/$DIST/Release
 
-echo "$GPGKEYPHRASE" | gpg --default-key "$MYGPGKEY" --passphrase-fd 0 --output $WORKDIR/FinalCD/dists/$DIST/Release.gpg -ba $WORKDIR/FinalCD/dists/$DIST/Release
+gpg -q --default-key "$MYGPGKEY" --passphrase $GPGKEYPHRASE --output $WORKDIR/FinalCD/dists/$DIST/Release.gpg -ba $WORKDIR/FinalCD/dists/$DIST/Release
 echo "OK"
+
+# update disk info file
+mydate=$(date +"%Y%m%d")
+sed -i "s/^\(.*\) - \(.*\) ([0-9]\{8\})$/privacyIDEA Appliance (based on \1) - \2 ($mydate)/" $WORKDIR/FinalCD/.disk/info
 
 cd $WORKDIR/FinalCD
 echo -n "Updating md5 checksums.. "
@@ -441,13 +493,14 @@ find . -type f -print0 | xargs -0 md5sum > md5sum.txt
 echo "OK"
 
 cd $WORKDIR/FinalCD
-echo "Creating and ISO image..."
-mkisofs -b isolinux/isolinux.bin -c isolinux/boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table -J -hide-rr-moved -V $PNAME -o $WORKDIR/$CDNAME -R $WORKDIR/FinalCD/
-
+echo -n "Creating ISO image... "
+mkisofs -b isolinux/isolinux.bin -c isolinux/boot.cat -input-charset utf-8 -quiet -no-emul-boot -boot-load-size 4 -boot-info-table -J -hide-rr-moved -V $PNAME -o $WORKDIR/$CDNAME -R $WORKDIR/FinalCD/
+echo "OK"
+echo ""
+echo "Finished"
+echo "========"
 echo "CD Available in $WORKDIR/$CDNAME"
-echo "You can now remove all files in:"
-echo " - $WORKDIR/FinalCD"
 
 # Unmount the old CD
-#umount $CDSOURCEDIR
+umount $CDSOURCEDIR
 
