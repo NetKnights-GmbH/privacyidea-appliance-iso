@@ -1,5 +1,7 @@
 #!/bin/bash
 
+INSTALL_APPLIANCE=false
+
 ### mount cdrom
 [[ ! -f /media/cdrom/md5sum ]] && mount /dev/sr0 /media/cdrom
 
@@ -10,18 +12,21 @@ sed -i -e 's/\(^PermitRootLogin\).*$/\1 yes/' /etc/ssh/sshd_config
 LANG=C apt-cache depends privacyidea-apache2
 
 PIAPACHE_DEPS=$(LANG=C apt-cache depends privacyidea-apache2 | grep 'Depends:' | awk 'BEGIN{a=0}{if($1 ~ /^\|Depends:/){a=1;print $2}else{if(a == 1){a = 0}else{print $2}}}')
+PI_APPLIANCE_DEPS=""
+PI_APPLIANCE_DEB=""
 
-PIAPPL_DEPS=$(LANG=C apt-cache depends pi-appliance | grep 'Depends:' | awk 'BEGIN{a=0}{if($1 ~ /^\|Depends:/){a=1;print $2}else{if(a == 1){a = 0}else{print $2}}}')
+if [[ $INSTALL_APPLIANCE = "true" ]]; then
+    PIAPPL_DEPS=$(LANG=C apt-cache depends pi-appliance | grep 'Depends:' | awk 'BEGIN{a=0}{if($1 ~ /^\|Depends:/){a=1;print $2}else{if(a == 1){a = 0}else{print $2}}}')
 
-# remove the privacyidea-apache2 dependency from the list
-PI_APPLIANCE_DEPS=$(for i in $PIAPPL_DEPS; do if [[ $i != "privacyidea-apache2" ]]; then echo $i;fi; done)
+    # remove the privacyidea-apache2 dependency from the list
+    PI_APPLIANCE_DEPS=$(for i in $PIAPPL_DEPS; do if [[ $i != "privacyidea-apache2" ]]; then echo $i;fi; done)
+    PI_APPLIANCE_DEB=$(find /media/cdrom/pool -name pi-appliance*.deb)
+fi
 
 #echo "apt-get install -y $PIAPACHE_DEPS $PI_APPLIANCE_DEPS"
 apt-get install -y $PIAPACHE_DEPS $PI_APPLIANCE_DEPS
 
 PI_APACHE2_DEB=$(find /media/cdrom/pool -name privacyidea-apache2*.deb)
-PI_APPLIANCE_DEB=$(find /media/cdrom/pool -name pi-appliance*.deb)
-#echo "$PI_APACHE2_DEB, $PI_APPLIANCE_DEB"
 cp $PI_APACHE2_DEB $PI_APPLIANCE_DEB /root/
 
 # copy the firstboot script to /etc/rc.local

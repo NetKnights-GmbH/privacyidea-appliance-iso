@@ -48,7 +48,7 @@ d-i partman-basicmethods/method_only boolean false
 
 # Install the Ubuntu Server.
 tasksel	tasksel/first	multiselect	server, openssh-server
-d-i	pkgsel/include	string	mysql-server, apache2, aptitude, freeradius, tinc, libapache2-mod-wsgi
+d-i	pkgsel/include	string	mysql-server, apache2, freeradius, libapache2-mod-wsgi
 # Only install basic language packs. Let tasksel ask about tasks.
 #d-i	pkgsel/language-pack-patterns	string
 # No language support packages.

@@ -183,7 +183,6 @@ pciutils
 perl
 perl-base
 perl-modules-5.22
-pi-appliance
 plymouth
 plymouth-theme-ubuntu-text
 privacyidea-all
@@ -221,7 +220,6 @@ python-docutils
 python-ecdsa
 python-flask
 python-flask-babel
-python-flask-cache
 python-flask-migrate
 python-flask-script
 python-flask-sqlalchemy
@@ -260,9 +258,7 @@ python-py
 python-pycparser
 python-pygments
 python-pyinotify
-python-pyjwt
 python-pymysql
-python-pymysql-sa
 python-pyparsing
 python-pyrad
 python-pytest

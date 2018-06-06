@@ -3,14 +3,6 @@
 # Create a privacyIDEA Appliance installation iso-image.
 # Based on a script by Leigh Purdie (<>)
 #
-# Required packages:
-#     - apt-utils
-#     - squashfs-tools
-#     - gnupg
-#     - devscripts
-#     - rsync
-#     - genisoimage
-#
 # TODO:
 #     - make script filesystem-agnostic, remove any fixed paths, download all
 #       necessary files/folders
@@ -31,9 +23,11 @@ print_usage() {
 # This directory will contain files that need to be copied over to the new CD.
 EXTRASDIR=$(readlink -f $(dirname $0))
 # Ubuntu ISO image
-CDIMAGE="ubuntu-16.04.4-server-amd64.iso"
-
+CDIMAGE_NAME="ubuntu-16.04.4-server-amd64.iso"
+CDIMAGE_URL="http://releases.ubuntu.com/xenial/ubuntu-16.04.4-server-amd64.iso"
+CDIMAGE=$CDIMAGE_NAME
 verbose=0
+
 
 while getopts $OPTIONS o; do
     case "${o}" in
@@ -58,6 +52,86 @@ while getopts $OPTIONS o; do
     esac
 done
 
+# extra packages required on the build system
+REQUIRED_PACKAGES="apt-utils devscripts genisoimage"
+
+# file with extra package names
+EXTRA_PKG_LIST=$EXTRASDIR/extra_packages.txt
+EXTRA_PKGS_APPL="pi-appliance python-flask-cache python-pymysql-sa python-pyjwt"
+
+# Seed file
+SEEDFILE="privacyidea.seed"
+
+# Ubuntu distribution
+DIST="xenial"
+ARCH=amd64
+
+# GPG
+GPGKEYNAME="PrivacyIDEA Installation Key"
+GPGKEYCOMMENT="Package Signing"
+GPGKEYEMAIL="packages@netknights.it"
+GPGKEYPHRASE="MyLongButInsecurePassPhrase"
+MYGPGKEY="$GPGKEYNAME ($GPGKEYCOMMENT) <$GPGKEYEMAIL>"
+
+
+PNAME="privacyIDEA_Appliance"
+
+# Output CD name
+CDNAME="${PNAME}.iso"
+
+# install the appliance or just the server
+INSTALL_APPLIANCE=true
+
+# ------------ End of modifications.
+
+
+################## Initial requirements
+# TODO: Do we need root only for mounting/umounting the image?
+id | grep -c uid=0 >/dev/null
+if [ $? -gt 0 ]; then
+    echo "You need to be root in order to run this script.."
+    echo " - sudo /bin/sh prior to executing."
+    exit
+fi
+
+# check status of required packages
+for i in $REQUIRED_PACKAGES; do
+    if [[ "$(LANG=C dpkg-query -W -f='${db:Status-Status}\n' $i)" = "not-installed" ]]; then
+        echo "Required Package $i not installed! Installing... "
+        apt-get install $i
+    fi
+done
+
+# check status of apt sources
+DEB_SRC_REGEXP="^deb-src .*/ubuntu/\? xenial main restricted$"
+DEB_SRC_ENTRY="deb-src http://de.archive.ubuntu.com/ubuntu/ xenial main restricted"
+DEB_INST_REGEXP="^deb .*/ubuntu/\? xenial main/debian-installer$"
+DEB_INST_ENTRY="deb http://de.archive.ubuntu.com/ubuntu/ xenial main/debian-installer"
+PI_APPL_REGEXP="^deb .*lancelot.netknights.it/apt\(/.*\)\?/stable xenial main$"
+if ! grep -e "$DEB_SRC_REGEXP" /etc/apt/sources.list /etc/apt/sources.list.d/*.list > /dev/null; then
+    echo "No deb-src entry found in apt sources. Adding \"$DEB_SRC_ENTRY\" to /etc/apt/sources.list ... "
+    echo $DEB_SRC_ENTRY >> /etc/apt/sources.list
+fi
+if ! grep -e "$DEB_INST_REGEXP" /etc/apt/sources.list /etc/apt/sources.list.d/*.list > /dev/null; then
+    echo "No debian installer entry found in apt sources. Adding \"$DEB_INST_ENTRY\" to /etc/apt/sources.list ... "
+    echo $DEB_INST_ENTRY >> /etc/apt/sources.list
+fi
+if ! grep -e "$PI_APPL_REGEXP" /etc/apt/sources.list /etc/apt/sources.list.d/*.list > /dev/null; then
+    echo "No privacyIDEA Appliance enterprise repository configured."
+    echo "Adding the public community PPA. The final ISO will only install the privacyIDEA Server, not the Appliance!"
+    add-apt-repository -y ppa:privacyidea/privacyidea > /dev/null 2>&1
+    INSTALL_APPLIANCE=false
+    EXTRA_PKGS_APPL=""
+fi
+apt-get update -qq
+
+# check if gpg is installed
+which gpg > /dev/null
+if [ $? -eq 1 ]; then
+    echo "Please install gpg to generate signing keys"
+    exit
+fi
+
 # The Base Directory
 if [[ -z $WORKDIR ]]; then
     WORKDIR=$(mktemp -d)
@@ -68,20 +142,16 @@ echo "=========";
 echo "   WORKDIR: $WORKDIR";
 echo "   EXTRASDIR: $EXTRASDIR";
 echo "   CDIMAGE: $CDIMAGE";
+if [[ $INSTALL_APPLIANCE = "true" ]]; then
+    echo "     Create ISO for installing privacyIDEA Server together with Appliance."
+else
+    echo "     Create ISO for installing only privacyIDEA Server (without Appliance)."
+fi
+echo "----------------------------------------------------------------------"
 
-
-# file with extra package names
-EXTRA_PKG_LIST=$EXTRASDIR/extra_packages.txt
 
 # This directory contains extra packages
 EXTRAPKGDIR="$WORKDIR/ExtraPackages"
-
-# Seed file
-SEEDFILE="privacyidea.seed"
-
-# Ubuntu distribution
-DIST="xenial"
-ARCH=amd64
 
 # Where the ubuntu iso image will be mounted
 CDSOURCEDIR="$WORKDIR/cdsource"
@@ -89,44 +159,15 @@ CDSOURCEDIR="$WORKDIR/cdsource"
 # Directory for building packages
 SOURCEDIR="$WORKDIR/source"
 
-# GPG
-GPGKEYNAME="PrivacyIDEA Installation Key"
-GPGKEYCOMMENT="Package Signing"
-GPGKEYEMAIL="packages@netknights.it"
-GPGKEYPHRASE="MyLongButInsecurePassPhrase"
-MYGPGKEY="$GPGKEYNAME ($GPGKEYCOMMENT) <$GPGKEYEMAIL>"
 export GNUPGHOME="$WORKDIR/gnupg"
 
 # Package list (dpkg -l) from an installed system.
 PACKAGELIST="$SOURCEDIR/PackageList"
 
-PNAME="privacyIDEA_Appliance"
-
-# Output CD name
-CDNAME="${PNAME}.iso"
-
-
-# ------------ End of modifications.
-
-
-################## Initial requirements
-id | grep -c uid=0 >/dev/null
-if [ $? -gt 0 ]; then
-    echo "You need to be root in order to run this script.."
-    echo " - sudo /bin/sh prior to executing."
-    exit
-fi
-
-which gpg > /dev/null
-if [ $? -eq 1 ]; then
-    echo "Please install gpg to generate signing keys"
-    exit
-fi
-
 # check if original cdimage exists
 if [ ! -f $CDIMAGE ]; then
-    echo "Cannot find your ubuntu image. Change CDIMAGE path."
-    exit
+    echo "Cannot find your base ubuntu image. Trying to download it from ubuntu server... "
+    cd $WORKDIR && wget -c $CDIMAGE_URL && CDIMAGE=$WORKDIR/$CDIMAGE_NAME
 fi
 
 # Create a few directories.
@@ -391,7 +432,7 @@ REBUILD_SQUASHFS=0
 MD5SUM_KEYRING=$(md5sum $KEYRING/keyrings/ubuntu-archive-keyring.gpg | awk '{print $1}')
 SQUASH_KEYRING_FILES="squashfs-root/usr/share/keyrings/ubuntu-archive-keyring.gpg squashfs-root/etc/apt/trusted.gpg squashfs-root/var/lib/apt/keyrings/ubuntu-archive-keyring.gpg"
 for i in $SQUASH_KEYRING_FILES; do
-    if ! echo "$MD5SUM_KEYRING  $i" | md5sum -c --quiet - 2>&1 > /dev/null; then
+    if [[ -f $i ]] && ! echo "$MD5SUM_KEYRING  $i" | md5sum -c --quiet - > /dev/null 2>&1; then
         REBUILD_SQUASHFS=1
         break
     fi
@@ -433,10 +474,10 @@ echo "OK"
 
 ################## Download/Update and copy the extra packages (if any)
 echo ""
-if [[ -d $EXTRAPKGDIR ]]; then
+if [[ -f $EXTRA_PKG_LIST && -d $EXTRAPKGDIR ]]; then
     echo -n "Downloading extra packages... "
     cd $EXTRAPKGDIR
-    apt-get download $(cat $EXTRA_PKG_LIST)
+    apt-get download -qq $(cat $EXTRA_PKG_LIST) $EXTRA_PKGS_APPL
     rsync -az --delete $EXTRAPKGDIR/ $WORKDIR/FinalCD/pool/extras/
     echo "OK"
 fi
@@ -450,7 +491,6 @@ if [ -d $EXTRASDIR/ExtrasBuild ]; then
     fi
     echo "OK"
 fi
-
 
 echo ""
 echo -n "Creating apt package list... "
@@ -472,14 +512,23 @@ if [ -d $EXTRAPKGDIR ]; then
     apt-ftparchive -qq -c $SOURCEDIR/apt.conf generate $SOURCEDIR/apt-ftparchive-extras.conf
 fi
 
-
-# Kill the existing release file
+# Kill the existing release file...
 rm -f $WORKDIR/FinalCD/dists/$DIST/Release*
 
+# ... rebuild ...
 apt-ftparchive -qq -c $SOURCEDIR/apt.conf release dists/$DIST/ > $WORKDIR/FinalCD/dists/$DIST/Release
 
-gpg -q --default-key "$MYGPGKEY" --passphrase $GPGKEYPHRASE --output $WORKDIR/FinalCD/dists/$DIST/Release.gpg -ba $WORKDIR/FinalCD/dists/$DIST/Release
+# ... and sign.
+gpg --batch --default-key "$MYGPGKEY" --passphrase $GPGKEYPHRASE --output $WORKDIR/FinalCD/dists/$DIST/Release.gpg -ba $WORKDIR/FinalCD/dists/$DIST/Release
 echo "OK"
+
+################## Update files on Image
+# TODO: update preeseed and final_script in case only server is installed
+if [[ $INSTALL_APPLIANCE = "true" ]]; then
+    echo "Updating preseed and script file"
+    sed -i -e 's/^\(d-i[[:space:]]\+pkgsel\/include.*\)$/\1, aptitude, tinc/' $WORKDIR/FinalCD/preseed/$SEEDFILE
+    sed -i -e 's/^INSTALL_APPLIANCE=false$/INSTALL_APPLIANCE=true/' $WORKDIR/FinalCD/scripts/final_script.sh
+fi
 
 # update disk info file
 mydate=$(date +"%Y%m%d")
@@ -497,9 +546,14 @@ echo -n "Creating ISO image... "
 mkisofs -b isolinux/isolinux.bin -c isolinux/boot.cat -input-charset utf-8 -quiet -no-emul-boot -boot-load-size 4 -boot-info-table -J -hide-rr-moved -V $PNAME -o $WORKDIR/$CDNAME -R $WORKDIR/FinalCD/
 echo "OK"
 echo ""
+
+# make the work directory available for non-root user (or copy the image somewhere else?)
+chmod 755 $WORKDIR
+
 echo "Finished"
 echo "========"
 echo "CD Available in $WORKDIR/$CDNAME"
+echo "----------------------------------------------------------------------"
 
 # Unmount the old CD
 umount $CDSOURCEDIR
