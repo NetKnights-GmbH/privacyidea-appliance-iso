@@ -53,7 +53,7 @@ while getopts $OPTIONS o; do
 done
 
 # extra packages required on the build system
-REQUIRED_PACKAGES="apt-utils devscripts genisoimage"
+REQUIRED_PACKAGES="devscripts genisoimage"
 
 # file with extra package names
 EXTRA_PKG_LIST=$EXTRASDIR/extra_packages.txt
@@ -84,9 +84,7 @@ INSTALL_APPLIANCE=true
 
 # ------------ End of modifications.
 
-
 ################## Initial requirements
-# TODO: Do we need root only for mounting/umounting the image?
 id | grep -c uid=0 >/dev/null
 if [ $? -gt 0 ]; then
     echo "You need to be root in order to run this script.."
@@ -94,11 +92,19 @@ if [ $? -gt 0 ]; then
     exit
 fi
 
+# The Base Directory
+if [[ -z $WORKDIR || ! -d $WORKDIR ]]; then
+    WORKDIR=$(mktemp -d)
+fi
+
+# redirect stderr to logfile
+exec 2> $WORKDIR/build_stderr.log
+
 # check status of required packages
 for i in $REQUIRED_PACKAGES; do
-    if [[ "$(LANG=C dpkg-query -W -f='${db:Status-Status}\n' $i)" = "not-installed" ]]; then
+    if [[ $(LANG=C apt-cache policy $i | awk '$1 ~ /Installed:/ {print  $2}') = "(none)" ]]; then
         echo "Required Package $i not installed! Installing... "
-        apt-get install $i
+        apt-get -qq install $i
     fi
 done
 
@@ -119,23 +125,11 @@ fi
 if ! grep -e "$PI_APPL_REGEXP" /etc/apt/sources.list /etc/apt/sources.list.d/*.list > /dev/null; then
     echo "No privacyIDEA Appliance enterprise repository configured."
     echo "Adding the public community PPA. The final ISO will only install the privacyIDEA Server, not the Appliance!"
-    add-apt-repository -y ppa:privacyidea/privacyidea > /dev/null 2>&1
+    add-apt-repository -y ppa:privacyidea/privacyidea > /dev/null
     INSTALL_APPLIANCE=false
     EXTRA_PKGS_APPL=""
 fi
 apt-get update -qq
-
-# check if gpg is installed
-which gpg > /dev/null
-if [ $? -eq 1 ]; then
-    echo "Please install gpg to generate signing keys"
-    exit
-fi
-
-# The Base Directory
-if [[ -z $WORKDIR ]]; then
-    WORKDIR=$(mktemp -d)
-fi
 
 echo "Settings:";
 echo "=========";
@@ -390,7 +384,6 @@ echo -n "Generating keyfile...  "
 cd $SOURCEDIR/keyring
 KEYRING=`find $SOURCEDIR/keyring -maxdepth 1 -name "ubuntu-keyring*" -type d -print`
 if [ -z "$KEYRING" ]; then
-    # TODO: should we run apt-get update before?
     # TODO: this throws some warnings about missing keys and running as root
     apt-get source ubuntu-keyring
     KEYRING=`find $SOURCEDIR/keyring -maxdepth 1 -name "ubuntu-keyring*" -type d -print`
@@ -432,7 +425,7 @@ REBUILD_SQUASHFS=0
 MD5SUM_KEYRING=$(md5sum $KEYRING/keyrings/ubuntu-archive-keyring.gpg | awk '{print $1}')
 SQUASH_KEYRING_FILES="squashfs-root/usr/share/keyrings/ubuntu-archive-keyring.gpg squashfs-root/etc/apt/trusted.gpg squashfs-root/var/lib/apt/keyrings/ubuntu-archive-keyring.gpg"
 for i in $SQUASH_KEYRING_FILES; do
-    if [[ -f $i ]] && ! echo "$MD5SUM_KEYRING  $i" | md5sum -c --quiet - > /dev/null 2>&1; then
+    if [[ -f $i ]] && ! echo "$MD5SUM_KEYRING  $i" | md5sum -c --quiet - > /dev/null; then
         REBUILD_SQUASHFS=1
         break
     fi
