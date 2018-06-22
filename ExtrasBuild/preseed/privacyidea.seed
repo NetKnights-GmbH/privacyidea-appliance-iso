@@ -54,6 +54,11 @@ d-i	pkgsel/include	string	mysql-server, apache2, freeradius, libapache2-mod-wsgi
 # No language support packages.
 #d-i	pkgsel/install-language-support	boolean false
 
+# Any hostname and domain names assigned from dhcp take precedence over
+# values set here. However, setting the values still prevents the questions
+# from being shown, even if values come from dhcp.
+d-i netcfg/get_hostname string privacyidea
+
 # Automatically download and install stable updates?
 unattended-upgrades     unattended-upgrades/enable_auto_updates boolean false
 d-i pkgsel/update-policy select none
