@@ -255,6 +255,7 @@ python-pil
 python-ply
 python-privacyidea
 python-py
+python-pyasn1
 python-pycparser
 python-pygments
 python-pyinotify
