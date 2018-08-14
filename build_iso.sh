@@ -13,7 +13,7 @@
 ##
 
 OPTIND=1
-OPTIONS="h?vw:b:i:"
+OPTIONS="h?vw:e:i:"
 
 print_usage() {
     echo "Usage: $0 [-h/-?] [-w <working directory>] [-e <extras directory>] [-i <base iso-file>]";
@@ -34,18 +34,18 @@ while getopts $OPTIONS o; do
         w)
             WORKDIR=$(readlink -f ${OPTARG})
             ;;
-        b)
+        e)
             EXTRASDIR=$(readlink -f ${OPTARG})
             ;;
-	i)
-	    CDIMAGE=$(readlink -f ${OPTARG})
-	    ;;
-	h|\?)
-	    print_usage
-	    ;;
-	v)
-	    verbose=1
-	    ;;
+        i)
+            CDIMAGE=$(readlink -f ${OPTARG})
+            ;;
+        h|\?)
+            print_usage
+            ;;
+        v)
+            verbose=1
+            ;;
         *)
             print_usage
             ;;
@@ -215,6 +215,14 @@ if [[ -z $MYGPGKEYID ]]; then
 else
     echo "GPG Key for \"$GPGKEYNAME\" with keyid \"$MYGPGKEYID\" found in keyring."
 fi
+
+# Check the NetKnights Release Key
+NK_FPR=$( gpg --with-fingerprint --with-colons $EXTRASDIR/ExtrasBuild/scripts/NetKnights-Release.asc | awk -F ':' '$1 == "fpr" {print $10}')
+if [[ $NK_FPR != "09404ABBEDB3586DEDE4AD2200F70D62AE250082" ]]; then
+    echo "Could not verify fingerprint of NetKnights Release Key! Exiting"
+    exit
+fi
+
 
 ################## Mount the source CD image
 echo ""

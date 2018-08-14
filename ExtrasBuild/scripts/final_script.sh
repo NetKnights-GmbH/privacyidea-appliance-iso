@@ -29,5 +29,8 @@ apt-get install -y $PIAPACHE_DEPS $PI_APPLIANCE_DEPS
 PI_APACHE2_DEB=$(find /media/cdrom/pool -name privacyidea-apache2*.deb)
 cp $PI_APACHE2_DEB $PI_APPLIANCE_DEB /root/
 
+### add the enterprise repository packet signing  key to the apt keyring
+apt-key add /media/cdrom/scripts/NetKnights-Release.asc
+
 # copy the firstboot script to /etc/rc.local
 cp /media/cdrom/scripts/firstboot_script.sh /etc/rc.local
