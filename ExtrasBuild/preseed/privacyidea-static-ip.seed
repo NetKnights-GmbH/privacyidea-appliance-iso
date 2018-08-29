@@ -1,0 +1,113 @@
+
+d-i preseed/early_command string anna-install console-setup-udeb
+
+### Unattended Installation
+d-i auto-install/enable boolean true
+d-i debconf/priority select critical
+
+# disable keyboard detection
+d-i console-setup/ask_detect boolean false
+d-i console-setup/ask_detect seen true
+
+# enable root login
+d-i passwd/root-login boolean true
+
+# skip creation of a normal user account.
+d-i passwd/make-user boolean false
+
+### Partitioning ###
+# Suggest crypto LVM by default.
+#d-i	partman-auto/init_automatically_partition	select some_device_crypto
+#d-i	partman-auto/init_automatically_partition	seen false
+
+
+#d-i partman-auto/init_automatically_partition select biggest_free
+
+# You can choose one of the three predefined partitioning recipes:
+# - atomic: all files in one partition
+# - home:   separate /home partition
+# - multi:  separate /home, /var, and /tmp partitions
+#d-i partman-auto/choose_recipe select atomic
+
+# use the first disk
+#d-i partman-auto/disk string /dev/sda
+
+# This makes partman automatically partition without confirmation, provided
+# that you told it what to do using one of the methods above.
+d-i partman-auto/method string regular
+d-i partman-partitioning/confirm_write_new_label boolean true
+d-i partman/choose_partition select finish
+d-i partman/confirm boolean true
+d-i partman/confirm_nooverwrite boolean true
+d-i partman-basicmethods/method_only boolean false
+
+### Mirror settings
+#d-i mirror/http/hostname string ppa.launchpad.net
+#d-i mirror/http/directory string /privacyidea/privacyidea/ubuntu
+#d-i mirror/suite string xenial
+
+# Install the Ubuntu Server.
+tasksel	tasksel/first	multiselect	server, openssh-server
+d-i	pkgsel/include	string	mysql-server, apache2, freeradius, libapache2-mod-wsgi
+# Only install basic language packs. Let tasksel ask about tasks.
+#d-i	pkgsel/language-pack-patterns	string
+# No language support packages.
+#d-i	pkgsel/install-language-support	boolean false
+
+# Any hostname and domain names assigned from dhcp take precedence over
+# values set here. However, setting the values still prevents the questions
+# from being shown, even if values come from dhcp.
+d-i netcfg/get_hostname string privacyidea
+
+# Automatically download and install stable updates?
+unattended-upgrades     unattended-upgrades/enable_auto_updates boolean false
+d-i pkgsel/update-policy select none
+
+# Detecting your keyboard layout
+#keyboard-configuration  console-setup/detect    detect-keyboard 
+
+# Only ask the UTC question if there are other operating systems installed.
+d-i	clock-setup/utc-auto	boolean true
+# Verbose output and no boot splash screen.
+d-i	debian-installer/quiet	boolean false
+d-i	debian-installer/splash	boolean false
+# Install the debconf oem-config frontend (if in OEM mode).
+#d-i	oem-config-udeb/frontend	string debconf
+
+### GRUB installation
+# Wait for two seconds in grub
+d-i	grub-installer/timeout	string 2
+# This is fairly safe to set, it makes grub install automatically to the MBR
+# if no other operating system is detected on the machine.
+d-i     grub-installer/only_debian      boolean true
+# This one makes grub-installer install to the MBR if if finds some other OS
+# too, which is less safe as it might not be able to boot that other OS.
+d-i     grub-installer/with_other_os    boolean true
+# To install to the first device (assuming it is not a USB stick):
+d-i 	grub-installer/bootdev	string	default
+
+# Add the network and tasks oem-config steps by default.
+#oem-config	oem-config/steps	multiselect language, timezone, keyboard, user, network, tasks
+
+# allow root login via ssh (needed for privacyIDEA replication)
+# debconf/postinst will change this to "prohibit-password". We'll fix this in a final script
+openssh-server  openssh-server/permit-root-login        boolean true
+
+# empty password for MySQL:
+mysql-server-5.7        mysql-server/root_password      password	
+mysql-server-5.7        mysql-server/root_password_again        password	
+
+# Don't call canonical
+popularity-contest popularity-contest/participate boolean false
+
+# Avoid that last message about the install being complete.
+d-i finish-install/reboot_in_progress note
+
+# This command is run just before the install finishes, but when there is
+# still a usable /target directory. You can chroot to /target and use it
+# directly, or use the apt-install and in-target commands to easily install
+# packages and run commands in the target system.
+#d-i preseed/late_command string apt-install zsh; in-target chsh -s /bin/zsh
+d-i preseed/late_command string cp -a /cdrom/scripts/final_script.sh /target/usr/sbin; in-target /bin/bash /usr/sbin/final_script.sh;
+
+d-i netcfg/disable_dhcp boolean true
