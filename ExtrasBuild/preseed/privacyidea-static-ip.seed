@@ -1,4 +1,4 @@
 # include the base pressed file
 d-i preseed/include string privacyidea_base.seed
 
-d-i  base-installer/kernel/altmeta   string hwe-16.04
+d-i netcfg/disable_dhcp boolean true

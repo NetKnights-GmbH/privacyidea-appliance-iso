@@ -1,5 +1,9 @@
 #!/bin/bash
 
+while ! systemctl is-active --quiet mysql; do
+    sleep 1
+done
+
 # just install pi-appliance and privacyidea-apache2, hopefully everything else is already installed.
 dpkg -i /root/*.deb
 

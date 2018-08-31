@@ -1,13 +1,12 @@
 
-d-i preseed/early_command string anna-install console-setup-udeb
-
 ### Unattended Installation
 d-i auto-install/enable boolean true
+# We need to append this to the kernel command line in order to make it work!
 d-i debconf/priority select critical
 
-# disable keyboard detection
-d-i console-setup/ask_detect boolean false
-d-i console-setup/ask_detect seen true
+# disable keyboard detection (this is done by setting the critical priority)
+#d-i console-setup/ask_detect boolean false
+#d-i console-setup/ask_detect seen true
 
 # enable root login
 d-i passwd/root-login boolean true
@@ -41,18 +40,9 @@ d-i partman/confirm boolean true
 d-i partman/confirm_nooverwrite boolean true
 d-i partman-basicmethods/method_only boolean false
 
-### Mirror settings
-#d-i mirror/http/hostname string ppa.launchpad.net
-#d-i mirror/http/directory string /privacyidea/privacyidea/ubuntu
-#d-i mirror/suite string xenial
-
 # Install the Ubuntu Server.
 tasksel	tasksel/first	multiselect	server, openssh-server
 d-i	pkgsel/include	string	mysql-server, apache2, freeradius, libapache2-mod-wsgi cifs-utils
-# Only install basic language packs. Let tasksel ask about tasks.
-#d-i	pkgsel/language-pack-patterns	string
-# No language support packages.
-#d-i	pkgsel/install-language-support	boolean false
 
 # Any hostname and domain names assigned from dhcp take precedence over
 # values set here. However, setting the values still prevents the questions
@@ -63,16 +53,11 @@ d-i netcfg/get_hostname string privacyidea
 unattended-upgrades     unattended-upgrades/enable_auto_updates boolean false
 d-i pkgsel/update-policy select none
 
-# Detecting your keyboard layout
-#keyboard-configuration  console-setup/detect    detect-keyboard 
-
 # Only ask the UTC question if there are other operating systems installed.
 d-i	clock-setup/utc-auto	boolean true
 # Verbose output and no boot splash screen.
 d-i	debian-installer/quiet	boolean false
 d-i	debian-installer/splash	boolean false
-# Install the debconf oem-config frontend (if in OEM mode).
-#d-i	oem-config-udeb/frontend	string debconf
 
 ### GRUB installation
 # Wait for two seconds in grub
@@ -86,16 +71,14 @@ d-i     grub-installer/with_other_os    boolean true
 # To install to the first device (assuming it is not a USB stick):
 d-i 	grub-installer/bootdev	string	default
 
-# Add the network and tasks oem-config steps by default.
-#oem-config	oem-config/steps	multiselect language, timezone, keyboard, user, network, tasks
 
 # allow root login via ssh (needed for privacyIDEA replication)
 # debconf/postinst will change this to "prohibit-password". We'll fix this in a final script
 openssh-server  openssh-server/permit-root-login        boolean true
 
 # empty password for MySQL:
-mysql-server-5.7        mysql-server/root_password      password	
-mysql-server-5.7        mysql-server/root_password_again        password	
+mysql-server-5.7        mysql-server/root_password      password
+mysql-server-5.7        mysql-server/root_password_again        password
 
 # Don't call canonical
 popularity-contest popularity-contest/participate boolean false

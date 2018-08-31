@@ -4,6 +4,9 @@
 # Based on a script by Leigh Purdie (<>)
 #
 # TODO:
+#     - update/upgrade external template machine to get new packages
+#     - make workdir parameter non-optional
+#     - use external config file
 #     - make script filesystem-agnostic, remove any fixed paths, download all
 #       necessary files/folders
 
@@ -23,10 +26,11 @@ print_usage() {
 # This directory will contain files that need to be copied over to the new CD.
 EXTRASDIR=$(readlink -f $(dirname $0))
 # Ubuntu ISO image
-CDIMAGE_NAME="ubuntu-16.04.4-server-amd64.iso"
-CDIMAGE_URL="http://releases.ubuntu.com/xenial/ubuntu-16.04.4-server-amd64.iso"
+CDIMAGE_NAME="ubuntu-16.04.5-server-amd64.iso"
+CDIMAGE_URL="http://releases.ubuntu.com/xenial/ubuntu-16.04.5-server-amd64.iso"
 CDIMAGE=$CDIMAGE_NAME
 verbose=0
+TEMPLATE_SERVER="pi-template.office.netknights.it"
 
 
 while getopts $OPTIONS o; do
@@ -87,9 +91,9 @@ INSTALL_APPLIANCE=true
 ################## Initial requirements
 id | grep -c uid=0 >/dev/null
 if [ $? -gt 0 ]; then
-    echo "You need to be root in order to run this script.."
-    echo " - sudo /bin/sh prior to executing."
-    exit
+    echo "Running as unprivileged user!"
+    echo "Please make sure that sudo and passwordless login to the template machine work!"
+    echo ""
 fi
 
 # The Base Directory
@@ -129,7 +133,6 @@ if ! grep -e "$PI_APPL_REGEXP" /etc/apt/sources.list /etc/apt/sources.list.d/*.l
     INSTALL_APPLIANCE=false
     EXTRA_PKGS_APPL=""
 fi
-apt-get update -qq
 
 echo "Settings:";
 echo "=========";
@@ -176,10 +179,11 @@ if [ ! -d $SOURCEDIR/squashfs ]; then mkdir -p $SOURCEDIR/squashfs; fi
 if [ ! -d $GNUPGHOME ]; then mkdir -p $GNUPGHOME; fi
 chmod 700 $GNUPGHOME
 
-# check if extra packages need to be installed
-if [[ -f $EXTRA_PKG_LIST ]]; then
-    [[ ! -d $EXTRAPKGDIR ]] && mkdir -p $EXTRAPKGDIR
-fi
+
+################## Download packages on the template machine
+ssh root@${TEMPLATE_SERVER} "mkdir -p /root/pool/extras && cd /root/pool/extras && 
+dpkg --get-selections | awk '{print \$1}' | xargs apt-get download 2>/dev/null" &
+gather_pid=$!
 
 echo ""
 
@@ -233,13 +237,14 @@ if [ ! -f $CDSOURCEDIR/md5sum.txt ]; then
         umount $CDSOURCEDIR
     fi
 
-    mount -o loop,ro $CDIMAGE $CDSOURCEDIR/
+    sudo mount -o loop,ro $CDIMAGE $CDSOURCEDIR/
     if [ ! -f $CDSOURCEDIR/md5sum.txt ]; then
         echo "Mount did not succeed. Exiting."
         exit
     fi
     echo "OK"
 fi
+
 
 ################## Setup APT configuration
 
@@ -339,52 +344,13 @@ if [ ! -f $SOURCEDIR/indices/override.$DIST.extra.main ]; then
     done
 fi
 
+
 ################## Copy over the source data
 echo ""
 echo -n "Resyncing old data...  "
-
-cd $WORKDIR/FinalCD
-rsync -atz --delete $CDSOURCEDIR/ $WORKDIR/FinalCD/
+rsync -rltz --chmod=u+w $CDSOURCEDIR/ $WORKDIR/FinalCD/
 echo "OK"
 
-
-################## Remove packages that we no longer require
-
-echo ""
-# PackageList is a dpkg -l from our 'build' server.
-if [ ! -f $PACKAGELIST ]; then
-    echo "No PackageList found. Assuming that you do not require any packages to be removed."
-else
-    cat $PACKAGELIST | grep "^ii" | awk '{print $2 "_" $3}' > $SOURCEDIR/temppackages
-
-    echo "Removing files that are no longer required.."
-    cd $WORKDIR/FinalCD
-    # Only use main for the moment. Keep all 'restricted' debs
-    rm -f $SOURCEDIR/RemovePackages
-    # Note: Leave the udeb's alone.
-    for i in `find pool/main -type f -name "*.deb" -print`; do
-        FILE=`basename $i | sed 's/_[a-zA-Z0-9\.]*$//'`
-        GFILE=`echo $FILE | sed 's/\+/\\\+/g' | sed 's/\./\\\./g'`
-        # pool/main/a/alien/alien_8.53_all.deb becomes alien_8.53
-        egrep "^"$GFILE $SOURCEDIR/temppackages >/dev/null
-        if [ $? -ne 0 ]; then
-            # NOT Found
-            # Note: Keep a couple of anciliary files
-
-            zgrep "Filename: $i" $CDSOURCEDIR/dists/$DIST/main/debian-installer/binary-$ARCH/Packages.gz >/dev/null
-            if [ $? -eq 0 ]; then
-                # Keep the debian-installer files - we need them.
-                echo "* Keeping special file $FILE"
-            else
-                echo "- Removing unneeded file $FILE"
-                rm -f $WORKDIR/FinalCD/$i
-
-            fi
-        else
-            echo "+ Retaining $FILE"
-        fi
-    done
-fi
 
 ################## Create the ubuntu keyring package
 echo ""
@@ -472,24 +438,18 @@ fi
 cp -a filesystem.* $WORKDIR/FinalCD/install/
 echo "OK"
 
+# wait for the package download on the template machine to complete
+wait $gather_pid
 
 ################## Download/Update and copy the extra packages (if any)
 echo ""
-if [[ -f $EXTRA_PKG_LIST && -d $EXTRAPKGDIR ]]; then
-    echo -n "Downloading extra packages... "
-    cd $EXTRAPKGDIR
-    apt-get download -qq $(cat $EXTRA_PKG_LIST) $EXTRA_PKGS_APPL
-    rsync -az --delete $EXTRAPKGDIR/ $WORKDIR/FinalCD/pool/extras/
-    echo "OK"
-fi
+echo -n "Downloading extra packages... "
+rsync -rtz root@${TEMPLATE_SERVER}:/root/pool/extras/ $WORKDIR/FinalCD/pool/extras/
+echo "OK"
 
 if [ -d $EXTRASDIR/ExtrasBuild ]; then
     echo -n "Copying Extra files...  "
     rsync -az $EXTRASDIR/ExtrasBuild/ $WORKDIR/FinalCD/
-
-    if [ ! -f "$EXTRASDIR/ExtrasBuild/isolinux/isolinux.cfg" ]; then
-        cat $CDSOURCEDIR/isolinux/isolinux.cfg | sed "s/^APPEND.*/APPEND   preseed\/file=\/cdrom\/preseed\/$SEEDFILE vga=normal initrd=\/install\/initrd.gz ramdisk_size=16384 root=\/dev\/rd\/0 DEBCONF_PRIORITY=critical debconf\/priority=critical rw --/" > $WORKDIR/FinalCD/isolinux/isolinux.cfg
-    fi
     echo "OK"
 fi
 
@@ -499,7 +459,7 @@ cd $WORKDIR/FinalCD
 
 apt-ftparchive -qq -c $SOURCEDIR/apt.conf generate $SOURCEDIR/apt-ftparchive-deb.conf
 apt-ftparchive -qq -c $SOURCEDIR/apt.conf generate $SOURCEDIR/apt-ftparchive-udeb.conf
-if [ -d $EXTRAPKGDIR ]; then
+#if [ -d $EXTRAPKGDIR ]; then
     EXTRAS_DISTDIR="$WORKDIR/FinalCD/dists/$DIST/extras/binary-$ARCH"
     if [ ! -d $EXTRAS_DISTDIR ]; then
         mkdir -p $EXTRAS_DISTDIR
@@ -511,7 +471,7 @@ if [ -d $EXTRAPKGDIR ]; then
         apt-ftparchive -qq -c $SOURCEDIR/apt.conf packages $WORKDIR/FinalCD/pool/extras $SOURCEDIR/indices/override.xenial.main > $EXTRAS_DISTDIR/Packages
     fi
     apt-ftparchive -qq -c $SOURCEDIR/apt.conf generate $SOURCEDIR/apt-ftparchive-extras.conf
-fi
+#fi
 
 # Kill the existing release file...
 rm -f $WORKDIR/FinalCD/dists/$DIST/Release*
@@ -522,6 +482,7 @@ apt-ftparchive -qq -c $SOURCEDIR/apt.conf release dists/$DIST/ > $WORKDIR/FinalC
 # ... and sign.
 gpg --batch --default-key "$MYGPGKEY" --passphrase $GPGKEYPHRASE --output $WORKDIR/FinalCD/dists/$DIST/Release.gpg -ba $WORKDIR/FinalCD/dists/$DIST/Release
 echo "OK"
+
 
 ################## Update files on Image
 # TODO: update preeseed and final_script in case only server is installed
@@ -537,14 +498,15 @@ sed -i "s/^\(.*\) - \(.*\) ([0-9]\{8\})$/privacyIDEA Appliance (based on \1) - \
 
 cd $WORKDIR/FinalCD
 echo -n "Updating md5 checksums.. "
-chmod 666 md5sum.txt
 rm -f md5sum.txt
 find . -type f -print0 | xargs -0 md5sum > md5sum.txt
 echo "OK"
 
 cd $WORKDIR/FinalCD
 echo -n "Creating ISO image... "
-mkisofs -b isolinux/isolinux.bin -c isolinux/boot.cat -input-charset utf-8 -quiet -no-emul-boot -boot-load-size 4 -boot-info-table -J -hide-rr-moved -V $PNAME -o $WORKDIR/$CDNAME -R $WORKDIR/FinalCD/
+mkisofs -b isolinux/isolinux.bin -c isolinux/boot.cat -input-charset utf-8 \
+        -quiet -no-emul-boot -boot-load-size 4 -boot-info-table -J -hide-rr-moved \
+        -V $PNAME -o $WORKDIR/$CDNAME -R $WORKDIR/FinalCD/
 echo "OK"
 echo ""
 
@@ -557,5 +519,5 @@ echo "CD Available in $WORKDIR/$CDNAME"
 echo "----------------------------------------------------------------------"
 
 # Unmount the old CD
-umount $CDSOURCEDIR
+sudo umount $CDSOURCEDIR
 
