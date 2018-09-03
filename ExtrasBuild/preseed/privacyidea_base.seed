@@ -42,7 +42,10 @@ d-i partman-basicmethods/method_only boolean false
 
 # Install the Ubuntu Server.
 tasksel	tasksel/first	multiselect	server, openssh-server
-d-i	pkgsel/include	string	mysql-server, apache2, freeradius, libapache2-mod-wsgi cifs-utils
+d-i	pkgsel/include	string	mysql-server, apache2, freeradius, libapache2-mod-wsgi, \
+                            cifs-utils, tinc, aptitude, rng-tools, \
+                            python-flask, python-sqlalchemy, python-matplotlib, \
+                            python-pandas, python-openssl
 
 # Any hostname and domain names assigned from dhcp take precedence over
 # values set here. However, setting the values still prevents the questions

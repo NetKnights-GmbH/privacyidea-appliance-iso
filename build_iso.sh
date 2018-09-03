@@ -15,11 +15,12 @@
 ## Config section
 ##
 
+
 OPTIND=1
-OPTIONS="h?vw:e:i:"
+OPTIONS="h?vi:"
 
 print_usage() {
-    echo "Usage: $0 [-h/-?] [-w <working directory>] [-e <extras directory>] [-i <base iso-file>]";
+    echo "Usage: $0 [-h/-?] [-i <base iso-file>] <working directory>";
     exit 1;
 }
 
@@ -28,19 +29,13 @@ EXTRASDIR=$(readlink -f $(dirname $0))
 # Ubuntu ISO image
 CDIMAGE_NAME="ubuntu-16.04.5-server-amd64.iso"
 CDIMAGE_URL="http://releases.ubuntu.com/xenial/ubuntu-16.04.5-server-amd64.iso"
-CDIMAGE=$CDIMAGE_NAME
+CDIMAGE_SHA256="c94de1cc2e10160f325eb54638a5b5aa38f181d60ee33dae9578d96d932ee5f8"
 verbose=0
 TEMPLATE_SERVER="pi-template.office.netknights.it"
 
 
 while getopts $OPTIONS o; do
     case "${o}" in
-        w)
-            WORKDIR=$(readlink -f ${OPTARG})
-            ;;
-        e)
-            EXTRASDIR=$(readlink -f ${OPTARG})
-            ;;
         i)
             CDIMAGE=$(readlink -f ${OPTARG})
             ;;
@@ -48,6 +43,7 @@ while getopts $OPTIONS o; do
             print_usage
             ;;
         v)
+            # currently not implemented
             verbose=1
             ;;
         *)
@@ -56,15 +52,24 @@ while getopts $OPTIONS o; do
     esac
 done
 
+shift $(($OPTIND - 1));
+
+WORKDIR=$1
+
+if [[ -z $WORKDIR ]]; then
+    echo "No working directory given!"
+    print_usage
+fi
+WORKDIR=$(realpath $WORKDIR)
+
 # extra packages required on the build system
-REQUIRED_PACKAGES="devscripts genisoimage"
+REQUIRED_PACKAGES="devscripts genisoimage squashfs-tools"
 
 # file with extra package names
 EXTRA_PKG_LIST=$EXTRASDIR/extra_packages.txt
-EXTRA_PKGS_APPL="pi-appliance python-flask-cache python-pymysql-sa python-pyjwt"
 
 # Seed file
-SEEDFILE="privacyidea.seed"
+SEEDFILE="privacyidea_base.seed"
 
 # Ubuntu distribution
 DIST="xenial"
@@ -83,22 +88,18 @@ PNAME="privacyIDEA_Appliance"
 # Output CD name
 CDNAME="${PNAME}.iso"
 
-# install the appliance or just the server
-INSTALL_APPLIANCE=true
-
 # ------------ End of modifications.
 
 ################## Initial requirements
-id | grep -c uid=0 >/dev/null
-if [ $? -gt 0 ]; then
-    echo "Running as unprivileged user!"
+if [[ $(id -u) != 0 ]]; then
+    echo "Running as an unprivileged user!"
     echo "Please make sure that sudo and passwordless login to the template machine work!"
     echo ""
 fi
 
 # The Base Directory
-if [[ -z $WORKDIR || ! -d $WORKDIR ]]; then
-    WORKDIR=$(mktemp -d)
+if [[ ! -d $WORKDIR ]]; then
+    mkdir -p $WORKDIR
 fi
 
 # redirect stderr to logfile
@@ -112,43 +113,31 @@ for i in $REQUIRED_PACKAGES; do
     fi
 done
 
-# check status of apt sources
-DEB_SRC_REGEXP="^deb-src .*/ubuntu/\? xenial main restricted$"
-DEB_SRC_ENTRY="deb-src http://de.archive.ubuntu.com/ubuntu/ xenial main restricted"
-DEB_INST_REGEXP="^deb .*/ubuntu/\? xenial main/debian-installer$"
-DEB_INST_ENTRY="deb http://de.archive.ubuntu.com/ubuntu/ xenial main/debian-installer"
-PI_APPL_REGEXP="^deb .*lancelot.netknights.it/apt\(/.*\)\?/stable xenial main$"
-if ! grep -e "$DEB_SRC_REGEXP" /etc/apt/sources.list /etc/apt/sources.list.d/*.list > /dev/null; then
-    echo "No deb-src entry found in apt sources. Adding \"$DEB_SRC_ENTRY\" to /etc/apt/sources.list ... "
-    echo $DEB_SRC_ENTRY >> /etc/apt/sources.list
+# check CD image
+if [[ -z $CDIMAGE ]]; then
+    CDIMAGE=$WORKDIR/$CDIMAGE_NAME
 fi
-if ! grep -e "$DEB_INST_REGEXP" /etc/apt/sources.list /etc/apt/sources.list.d/*.list > /dev/null; then
-    echo "No debian installer entry found in apt sources. Adding \"$DEB_INST_ENTRY\" to /etc/apt/sources.list ... "
-    echo $DEB_INST_ENTRY >> /etc/apt/sources.list
+
+# check if original cdimage exists
+if [[ ! -f $CDIMAGE ]]; then
+    echo "Cannot find your base ubuntu image. Trying to download it from ubuntu server... "
+    cd $WORKDIR && wget -c $CDIMAGE_URL && CDIMAGE=$WORKDIR/$CDIMAGE_NAME
 fi
-if ! grep -e "$PI_APPL_REGEXP" /etc/apt/sources.list /etc/apt/sources.list.d/*.list > /dev/null; then
-    echo "No privacyIDEA Appliance enterprise repository configured."
-    echo "Adding the public community PPA. The final ISO will only install the privacyIDEA Server, not the Appliance!"
-    add-apt-repository -y ppa:privacyidea/privacyidea > /dev/null
-    INSTALL_APPLIANCE=false
-    EXTRA_PKGS_APPL=""
-fi
+
+# check the image checksum
+#if ! echo "$CDIMAGE_SHA256 $CDIMAGE" | sha256sum -c > /dev/null; then
+#    echo "Could not verify checksum of ubuntu image!"
+#    exit 1
+#fi
 
 echo "Settings:";
 echo "=========";
 echo "   WORKDIR: $WORKDIR";
 echo "   EXTRASDIR: $EXTRASDIR";
 echo "   CDIMAGE: $CDIMAGE";
-if [[ $INSTALL_APPLIANCE = "true" ]]; then
-    echo "     Create ISO for installing privacyIDEA Server together with Appliance."
-else
-    echo "     Create ISO for installing only privacyIDEA Server (without Appliance)."
-fi
-echo "----------------------------------------------------------------------"
+echo "     Create ISO for installing privacyIDEA Server together with Appliance."
+echo "--------------------------------------------------------------------------"
 
-
-# This directory contains extra packages
-EXTRAPKGDIR="$WORKDIR/ExtraPackages"
 
 # Where the ubuntu iso image will be mounted
 CDSOURCEDIR="$WORKDIR/cdsource"
@@ -158,15 +147,6 @@ SOURCEDIR="$WORKDIR/source"
 
 export GNUPGHOME="$WORKDIR/gnupg"
 
-# Package list (dpkg -l) from an installed system.
-PACKAGELIST="$SOURCEDIR/PackageList"
-
-# check if original cdimage exists
-if [ ! -f $CDIMAGE ]; then
-    echo "Cannot find your base ubuntu image. Trying to download it from ubuntu server... "
-    cd $WORKDIR && wget -c $CDIMAGE_URL && CDIMAGE=$WORKDIR/$CDIMAGE_NAME
-fi
-
 # Create a few directories.
 if [ ! -d $WORKDIR ]; then mkdir -p $WORKDIR; fi
 if [ ! -d $WORKDIR/FinalCD ]; then mkdir -p $WORKDIR/FinalCD; fi
@@ -174,7 +154,6 @@ if [ ! -d $CDSOURCEDIR ]; then mkdir -p $CDSOURCEDIR; fi
 if [ ! -d $SOURCEDIR ]; then mkdir -p $SOURCEDIR; fi
 if [ ! -d $SOURCEDIR/keyring ]; then mkdir -p $SOURCEDIR/keyring; fi
 if [ ! -d $SOURCEDIR/indices ]; then mkdir -p $SOURCEDIR/indices; fi
-if [ ! -d $SOURCEDIR/ubuntu-meta ]; then mkdir -p $SOURCEDIR/ubuntu-meta; fi
 if [ ! -d $SOURCEDIR/squashfs ]; then mkdir -p $SOURCEDIR/squashfs; fi
 if [ ! -d $GNUPGHOME ]; then mkdir -p $GNUPGHOME; fi
 chmod 700 $GNUPGHOME
@@ -194,11 +173,12 @@ cat << 'EOF' > $GNUPGHOME/gpg.conf
 personal-digest-preferences SHA512
 cert-digest-algo SHA512
 default-preference-list SHA512 SHA384 SHA256 SHA224 AES256 AES192 AES CAST5 ZLIB BZIP2 ZIP Uncompressed
+keyid-format long
 EOF
 chmod 600 $GNUPGHOME/gpg.conf
 
 # Check if a gpg-key already exists in the keyring, otherwise create it
-MYGPGKEYID=$(gpg -k --with-colons "$GPGKEYNAME" | awk -F: '/^pub:/ {print substr($5, 9, 16)}')
+MYGPGKEYID=$(gpg -k --with-colons "$GPGKEYNAME" | awk -F: '/^pub:/ {print $5}')
 if [[ -z $MYGPGKEYID ]]; then
     echo "No GPG Key found in your keyring."
     echo "Generating a new gpg key ($GPGKEYNAME $GPGKEYCOMMENT) with passphrase \"$GPGKEYPHRASE\" ..."
@@ -215,7 +195,7 @@ if [[ -z $MYGPGKEYID ]]; then
 	Passphrase: $GPGKEYPHRASE
 	EOF
     gpg --batch --gen-key $WORKDIR/key.inc
-    MYGPGKEYID=$(gpg -k --with-colons "$GPGKEYNAME" | awk -F: '/^pub:/ {print substr($5, 9, 16)}')
+    MYGPGKEYID=$(gpg -k --with-colons "$GPGKEYNAME" | awk -F: '/^pub:/ {print $5}')
 else
     echo "GPG Key for \"$GPGKEYNAME\" with keyid \"$MYGPGKEYID\" found in keyring."
 fi
@@ -259,82 +239,88 @@ if [ ! -f $SOURCEDIR/apt.conf ]; then
 fi
 
 if [ ! -f $SOURCEDIR/apt-ftparchive-deb.conf ]; then
-    echo "Dir {
-  ArchiveDir \"$WORKDIR/FinalCD\";
+    cat <<- EOF > $SOURCEDIR/apt-ftparchive-deb.conf
+Dir {
+  ArchiveDir "$WORKDIR/FinalCD";
 };
 
 TreeDefault {
-  Directory \"pool/\";
+  Directory "pool";
 };
 
-BinDirectory \"pool/main\" {
-  Packages \"dists/$DIST/main/binary-$ARCH/Packages\";
-  BinOverride \"$SOURCEDIR/indices/override.$DIST.main\";
-  ExtraOverride \"$SOURCEDIR/indices/override.$DIST.extra.main\";
+BinDirectory "pool/main" {
+  Packages "dists/$DIST/main/binary-$ARCH/Packages";
+  BinOverride "$SOURCEDIR/indices/override.$DIST.main";
+  ExtraOverride "$SOURCEDIR/indices/override.$DIST.extra.main";
 };
 
 Default {
   Packages {
-    Extensions \".deb\";
-    Compress \". gzip\";
+    Extensions ".deb";
+    Compress ". gzip";
   };
 };
 
 Contents {
-  Compress \"gzip\";
-};" > $SOURCEDIR/apt-ftparchive-deb.conf
+  Compress "gzip";
+};
+EOF
 fi
 
 if [ ! -f $SOURCEDIR/apt-ftparchive-udeb.conf ]; then
-    echo "Dir {
-  ArchiveDir \"$WORKDIR/FinalCD\";
+    cat <<- EOF > $SOURCEDIR/apt-ftparchive-udeb.conf
+Dir {
+  ArchiveDir "$WORKDIR/FinalCD";
 };
 
 TreeDefault {
-  Directory \"pool/\";
+  Directory "pool";
 };
 
-BinDirectory \"pool/main\" {
-  Packages \"dists/$DIST/main/debian-installer/binary-$ARCH/Packages\";
-  BinOverride \"$SOURCEDIR/indices/override.$DIST.main.debian-installer\";
+BinDirectory "pool/main" {
+  Packages "dists/$DIST/main/debian-installer/binary-$ARCH/Packages";
+  BinOverride "$SOURCEDIR/indices/override.$DIST.main.debian-installer";
 };
 
 Default {
   Packages {
-    Extensions \".udeb\";
-    Compress \". gzip\";
+    Extensions ".udeb";
+    Compress ". gzip";
   };
 };
 
 Contents {
-  Compress \"gzip\";
-};" > $SOURCEDIR/apt-ftparchive-udeb.conf
+  Compress "gzip";
+};
+EOF
 fi
 
 if [ ! -f $SOURCEDIR/apt-ftparchive-extras.conf ]; then
-    echo "Dir {
-  ArchiveDir \"$WORKDIR/FinalCD\";
+    cat <<-EOF > $SOURCEDIR/apt-ftparchive-extras.conf
+Dir {
+  ArchiveDir "$WORKDIR/FinalCD";
 };
 
 TreeDefault {
-  Directory \"pool/\";
+  Directory "pool";
 };
 
-BinDirectory \"pool/extras\" {
-  Packages \"dists/$DIST/extras/binary-$ARCH/Packages\";
-  ExtraOverride \"$SOURCEDIR/indices/override.$DIST.extra.main\";
+BinDirectory "pool/extras" {
+  Packages "dists/$DIST/extras/binary-$ARCH/Packages";
+  ExtraOverride "$SOURCEDIR/indices/override.$DIST.extra.main";
 };
 
 Default {
   Packages {
-    Extensions \".deb\";
-    Compress \". gzip\";
+    Extensions ".deb";
+    Compress ". gzip";
   };
 };
 
 Contents {
-  Compress \"gzip\";
-};" > $SOURCEDIR/apt-ftparchive-extras.conf
+  Compress "gzip";
+};
+EOF
 fi
 
 if [ ! -f $SOURCEDIR/indices/override.$DIST.extra.main ]; then
@@ -359,7 +345,9 @@ cd $SOURCEDIR/keyring
 KEYRING=`find $SOURCEDIR/keyring -maxdepth 1 -name "ubuntu-keyring*" -type d -print`
 if [ -z "$KEYRING" ]; then
     # TODO: this throws some warnings about missing keys and running as root
-    apt-get source ubuntu-keyring
+    wget http://de.archive.ubuntu.com/ubuntu/pool/main/u/ubuntu-keyring/ubuntu-keyring_2012.05.19.tar.gz
+    wget http://de.archive.ubuntu.com/ubuntu/pool/main/u/ubuntu-keyring/ubuntu-keyring_2012.05.19.dsc
+    tar xzf ubuntu-keyring_2012.05.19.tar.gz
     KEYRING=`find $SOURCEDIR/keyring -maxdepth 1 -name "ubuntu-keyring*" -type d -print`
     if [ -z "$KEYRING" ]; then
         echo "Cannot grab keyring source! Exiting."
@@ -387,8 +375,10 @@ echo "OK"
 
 
 ################## Update and rebuild squashfs
-# TODO: check if package content changed so we don't need to rebuild squashfs
-#       unfortunately we already synched the source cd content, so we should check before...
+# TODO: - check if package content changed so we don't need to rebuild squashfs
+#         unfortunately we already synced the source cd content, so we should check before...
+#       - this whole process needs root so i wrapped the calls with sudo...
+
 echo ""
 echo -n "Generating SquashFS... "
 
@@ -416,18 +406,18 @@ done
 
 if [[ $REBUILD_SQUASHFS == 1 ]]; then
     echo -n "  Need to rebuild squashfs... "
-    rm -rf squashfs-root
-    unsquashfs $CDSOURCEDIR/install/filesystem.squashfs
+    sudo rm -rf squashfs-root
+    sudo unsquashfs $CDSOURCEDIR/install/filesystem.squashfs
     # copy the generated keyring with our key to several locations
     for i in $SQUASH_KEYRING_FILES; do
-        cp $KEYRING/keyrings/ubuntu-archive-keyring.gpg $i
+        sudo cp $KEYRING/keyrings/ubuntu-archive-keyring.gpg $i
     done
     # get the new squashfs size
-    du -sx --block-size=1 squashfs-root/ | cut -f1 > filesystem.size
+    sudo du -sx --block-size=1 squashfs-root/ | cut -f1 > filesystem.size
     # get the filesystem manifest
-    chroot squashfs-root/ dpkg-query -W --showformat='${binary:Package}\t${Version}\n' > filesystem.manifest
+    sudo chroot squashfs-root/ dpkg-query -W --showformat='${binary:Package}\t${Version}\n' > filesystem.manifest
     # create the new squashfs
-    mksquashfs squashfs-root filesystem.squashfs
+    sudo mksquashfs squashfs-root filesystem.squashfs
     # and sign it
     gpg --batch --passphrase $GPGKEYPHRASE --output filesystem.squashfs.gpg -ab filesystem.squashfs
 
@@ -444,7 +434,7 @@ wait $gather_pid
 ################## Download/Update and copy the extra packages (if any)
 echo ""
 echo -n "Downloading extra packages... "
-rsync -rtz root@${TEMPLATE_SERVER}:/root/pool/extras/ $WORKDIR/FinalCD/pool/extras/
+rsync -rtz --exclude ubuntu-keyring_* root@${TEMPLATE_SERVER}:/root/pool/extras/ $WORKDIR/FinalCD/pool/extras/
 echo "OK"
 
 if [ -d $EXTRASDIR/ExtrasBuild ]; then
@@ -485,13 +475,6 @@ echo "OK"
 
 
 ################## Update files on Image
-# TODO: update preeseed and final_script in case only server is installed
-if [[ $INSTALL_APPLIANCE = "true" ]]; then
-    echo "Updating preseed and script file"
-    sed -i -e 's/^\(d-i[[:space:]]\+pkgsel\/include.*\)$/\1, aptitude, tinc/' $WORKDIR/FinalCD/preseed/$SEEDFILE
-    sed -i -e 's/^INSTALL_APPLIANCE=false$/INSTALL_APPLIANCE=true/' $WORKDIR/FinalCD/scripts/final_script.sh
-fi
-
 # update disk info file
 mydate=$(date +"%Y%m%d")
 sed -i "s/^\(.*\) - \(.*\) ([0-9]\{8\})$/privacyIDEA Appliance (based on \1) - \2 ($mydate)/" $WORKDIR/FinalCD/.disk/info
@@ -507,6 +490,10 @@ echo -n "Creating ISO image... "
 mkisofs -b isolinux/isolinux.bin -c isolinux/boot.cat -input-charset utf-8 \
         -quiet -no-emul-boot -boot-load-size 4 -boot-info-table -J -hide-rr-moved \
         -V $PNAME -o $WORKDIR/$CDNAME -R $WORKDIR/FinalCD/
+if [[ $? != 0 ]]; then
+    echo "Generating the ISO image failed!"
+    exit 1
+fi
 echo "OK"
 echo ""
 
@@ -518,6 +505,6 @@ echo "========"
 echo "CD Available in $WORKDIR/$CDNAME"
 echo "----------------------------------------------------------------------"
 
-# Unmount the old CD
+# Unmount the old CD image
 sudo umount $CDSOURCEDIR
 
