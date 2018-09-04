@@ -155,6 +155,7 @@ if [ ! -d $SOURCEDIR ]; then mkdir -p $SOURCEDIR; fi
 if [ ! -d $SOURCEDIR/keyring ]; then mkdir -p $SOURCEDIR/keyring; fi
 if [ ! -d $SOURCEDIR/indices ]; then mkdir -p $SOURCEDIR/indices; fi
 if [ ! -d $SOURCEDIR/squashfs ]; then mkdir -p $SOURCEDIR/squashfs; fi
+if [ ! -d $SOURCEDIR/bootlogo ]; then mkdir -p $SOURCEDIR/bootlogo; fi
 if [ ! -d $GNUPGHOME ]; then mkdir -p $GNUPGHOME; fi
 chmod 700 $GNUPGHOME
 
@@ -479,8 +480,19 @@ echo "OK"
 mydate=$(date +"%Y%m%d")
 sed -i "s/^\(.*\) - \(.*\) ([0-9]\{8\})$/privacyIDEA Appliance (based on \1) - \2 ($mydate)/" $WORKDIR/FinalCD/.disk/info
 
+
+################## Update boot logo
+echo -n "Adding boot logo... "
+cd $SOURCEDIR/bootlogo
+cpio -i < $WORKDIR/FinalCD/isolinux/bootlogo
+cp $EXTRASDIR/ExtrasBuild/isolinux/splash.pcx .
+ls . | cpio -o > $WORKDIR/FinalCD/isolinux/bootlogo
+echo "OK"
+
+
+################## Finalize
 cd $WORKDIR/FinalCD
-echo -n "Updating md5 checksums.. "
+echo -n "Updating md5 checksums... "
 rm -f md5sum.txt
 find . -type f -print0 | xargs -0 md5sum > md5sum.txt
 echo "OK"

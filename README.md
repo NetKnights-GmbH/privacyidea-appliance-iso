@@ -13,8 +13,8 @@ by Leigh Purdie.
 You need a current point-release of the ubuntu server iso image (16.04.5 as of 2018/09/03). If 
 the image is not locally available, it will be downloaded from the ubuntu servers.
 
-You also need a freshly installed template machine with `pi-appliance` to collect all the updated 
-packages.
+You also need a template machine with a freshly installed `pi-appliance` to
+collect all the updated packages.
 
 The script makes extensive use of `sudo` to gain root privileges, so make sure it is available 
 and working. Alternatively the script can be run as root as well.
