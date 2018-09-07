@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# wait for mysql server
 while ! systemctl is-active --quiet mysql; do
     sleep 1
 done
