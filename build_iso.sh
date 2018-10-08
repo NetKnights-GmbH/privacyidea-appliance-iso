@@ -476,9 +476,10 @@ echo "OK"
 
 
 ################## Update files on Image
-# update disk info file
+# update disk info file and README.diskdefines
 mydate=$(date +"%Y%m%d")
 sed -i "s/^\(.*\) - \(.*\) ([0-9]\{8\})$/privacyIDEA Appliance (based on \1) - \2 ($mydate)/" $WORKDIR/FinalCD/.disk/info
+sed -i "s/^\(#define DISKNAME\)[[:space:]]\+\(.*\) - \(.*\)$/\1  privacyIDEA Appliance (based on \2) - \3 ($mydate)/" $WORKDIR/FinalCD/README.diskdefines
 
 
 ################## Update boot logo

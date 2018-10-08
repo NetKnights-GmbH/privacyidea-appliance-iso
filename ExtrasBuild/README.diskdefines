@@ -1,9 +1,0 @@
-#define DISKNAME  PrivacyIDEA Appliance (based on Ubuntu-Server 16.04.4 LTS "Xenial Xerus") - Release amd64
-#define TYPE  binary
-#define TYPEbinary  1
-#define ARCH  amd64
-#define ARCHamd64  1
-#define DISKNUM  1
-#define DISKNUM1  1
-#define TOTALNUM  0
-#define TOTALNUM0  1
