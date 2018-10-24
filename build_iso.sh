@@ -63,7 +63,7 @@ fi
 WORKDIR=$(realpath $WORKDIR)
 
 # extra packages required on the build system
-REQUIRED_PACKAGES="devscripts genisoimage squashfs-tools"
+REQUIRED_PACKAGES="devscripts genisoimage squashfs-tools isolinux syslinux-utils xorriso"
 
 # file with extra package names
 EXTRA_PKG_LIST=$EXTRASDIR/extra_packages.txt
@@ -162,7 +162,9 @@ chmod 700 $GNUPGHOME
 
 ################## Download packages on the template machine
 ssh root@${TEMPLATE_SERVER} "mkdir -p /root/pool/extras && cd /root/pool/extras && 
-dpkg --get-selections | awk '{print \$1}' | xargs apt-get download 2>/dev/null" &
+dpkg --get-selections | awk '\$2 ~ /install/ {print \$1}' | xargs apt-get download 2>/dev/null &&
+LANG=C apt-cache depends -o APT::Architectures=amd64 -i --recurse \
+linux-signed-generic | grep -v ':\|^ \|<debconf' | sort -u | xargs apt-get download 2>/dev/null" &
 gather_pid=$!
 
 echo ""
@@ -500,9 +502,12 @@ echo "OK"
 
 cd $WORKDIR/FinalCD
 echo -n "Creating ISO image... "
-mkisofs -b isolinux/isolinux.bin -c isolinux/boot.cat -input-charset utf-8 \
-        -quiet -no-emul-boot -boot-load-size 4 -boot-info-table -J -hide-rr-moved \
-        -V $PNAME -o $WORKDIR/$CDNAME -R $WORKDIR/FinalCD/
+xorrisofs -isohybrid-mbr /usr/lib/ISOLINUX/isohdpfx.bin \
+          -b isolinux/isolinux.bin -c isolinux/boot.cat -input-charset utf-8 \
+          -no-emul-boot -boot-load-size 4 -boot-info-table -J -hide-rr-moved \
+          -eltorito-alt-boot -e boot/grub/efi.img -no-emul-boot \
+          -V ${PNAME^^*} -o $WORKDIR/$CDNAME -R $WORKDIR/FinalCD/
+
 if [[ $? != 0 ]]; then
     echo "Generating the ISO image failed!"
     exit 1
