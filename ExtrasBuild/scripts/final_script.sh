@@ -90,3 +90,11 @@ EOF
 chmod 644 /etc/update-motd.d/00-header /etc/update-motd.d/10-help-text
 # and activate our own
 chmod 755 /etc/update-motd.d/00-pi-header /etc/update-motd.d/10-pi-help-text
+
+# The base image seems to do something different during an EFI installation
+# to get the installed system to boot properly (into grub).
+# After an installation with the modified image, one gets dropped into the
+# EFI-Shell on every boot (in my case with kvm/qemu). Since the EFI boot entry
+# couldn't be made persistent, we just drop in a workaround: an efi boot
+# script with the correct boot loader.
+[[ -d /boot/efi/ ]] && echo -e "echo -off\nfs0:\\\EFI\\\ubuntu\\\grubx64.efi" > /boot/efi/startup.nsh || true

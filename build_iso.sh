@@ -82,11 +82,13 @@ GPGKEYEMAIL="packages@netknights.it"
 GPGKEYPHRASE="MyLongButInsecurePassPhrase"
 MYGPGKEY="$GPGKEYNAME ($GPGKEYCOMMENT) <$GPGKEYEMAIL>"
 
-
 PNAME="privacyIDEA_Appliance"
 
 # Output CD name
 CDNAME="${PNAME}.iso"
+
+# Packages to remove from ISO
+PKG_REMOVE="main/s/snapd/ubuntu-core-launcher_2.34.2_amd64.deb"
 
 # ------------ End of modifications.
 
@@ -109,7 +111,7 @@ exec 2> $WORKDIR/build_stderr.log
 for i in $REQUIRED_PACKAGES; do
     if [[ $(LANG=C apt-cache policy $i | awk '$1 ~ /Installed:/ {print  $2}') = "(none)" ]]; then
         echo "Required Package $i not installed! Installing... "
-        apt-get -qq install $i
+        sudo apt-get -qq install $i
     fi
 done
 
@@ -161,7 +163,8 @@ chmod 700 $GNUPGHOME
 
 
 ################## Download packages on the template machine
-ssh root@${TEMPLATE_SERVER} "mkdir -p /root/pool/extras && cd /root/pool/extras && 
+ssh root@${TEMPLATE_SERVER} "apt-get update &&
+mkdir -p /root/pool/extras && cd /root/pool/extras &&
 dpkg --get-selections | awk '\$2 ~ /install/ {print \$1}' | xargs apt-get download 2>/dev/null &&
 LANG=C apt-cache depends -o APT::Architectures=amd64 -i --recurse \
 linux-signed-generic | grep -v ':\|^ \|<debconf' | sort -u | xargs apt-get download 2>/dev/null" &
@@ -179,6 +182,8 @@ default-preference-list SHA512 SHA384 SHA256 SHA224 AES256 AES192 AES CAST5 ZLIB
 keyid-format long
 EOF
 chmod 600 $GNUPGHOME/gpg.conf
+GPGKEYPHRASEFILE=$GNUPGHOME/pphrase.txt
+echo $GPGKEYPHRASE > $GPGKEYPHRASEFILE
 
 # Check if a gpg-key already exists in the keyring, otherwise create it
 MYGPGKEYID=$(gpg -k --with-colons "$GPGKEYNAME" | awk -F: '/^pub:/ {print $5}')
@@ -366,7 +371,7 @@ if [[ ! $KEYIDS =~ (^| )$MYGPGKEYID($| ) ]]; then
     rm -f ubuntu-archive-keyring.gpg
     gpg --output=ubuntu-archive-keyring.gpg --export $KEYIDS $MYGPGKEYID
     cd ..
-    debuild -k"$MYGPGKEYID" -p"gpg --passphrase $GPGKEYPHRASE"
+    debuild -k"$MYGPGKEYID" -p"gpg --passphrase-file $GPGKEYPHRASEFILE --batch --pinentry-mode loopback"
     rm -f $WORKDIR/FinalCD/pool/main/u/ubuntu-keyring/*
     cp ../ubuntu-keyring*deb $WORKDIR/FinalCD/pool/main/u/ubuntu-keyring/
     if [ $? -gt 0 ]; then
@@ -422,7 +427,7 @@ if [[ $REBUILD_SQUASHFS == 1 ]]; then
     # create the new squashfs
     sudo mksquashfs squashfs-root filesystem.squashfs
     # and sign it
-    gpg --batch --passphrase $GPGKEYPHRASE --output filesystem.squashfs.gpg -ab filesystem.squashfs
+    gpg --batch --pinentry-mode loopback --passphrase-file $GPGKEYPHRASEFILE --output filesystem.squashfs.gpg -ab filesystem.squashfs
 
     echo "  Done"
 fi
@@ -441,11 +446,21 @@ rsync -rtz --exclude ubuntu-keyring_* root@${TEMPLATE_SERVER}:/root/pool/extras/
 echo "OK"
 
 if [ -d $EXTRASDIR/ExtrasBuild ]; then
+    echo ""
     echo -n "Copying Extra files...  "
     rsync -az $EXTRASDIR/ExtrasBuild/ $WORKDIR/FinalCD/
     echo "OK"
 fi
 
+################## Remove unnecessary/broken Packages
+echo ""
+echo -n "Removing packages... "
+for rm_pkg in $PKG_REMOVE; do
+    rm -f $WORKDIR/FinalCD/pool/$rm_pkg
+done
+echo "OK"
+
+################## Building the package list
 echo ""
 echo -n "Creating apt package list... "
 cd $WORKDIR/FinalCD
@@ -473,7 +488,7 @@ rm -f $WORKDIR/FinalCD/dists/$DIST/Release*
 apt-ftparchive -qq -c $SOURCEDIR/apt.conf release dists/$DIST/ > $WORKDIR/FinalCD/dists/$DIST/Release
 
 # ... and sign.
-gpg --batch --default-key "$MYGPGKEY" --passphrase $GPGKEYPHRASE --output $WORKDIR/FinalCD/dists/$DIST/Release.gpg -ba $WORKDIR/FinalCD/dists/$DIST/Release
+gpg --batch --pinentry-mode loopback --default-key "$MYGPGKEY" --passphrase-file $GPGKEYPHRASEFILE --output $WORKDIR/FinalCD/dists/$DIST/Release.gpg -ba $WORKDIR/FinalCD/dists/$DIST/Release
 echo "OK"
 
 
@@ -525,4 +540,3 @@ echo "----------------------------------------------------------------------"
 
 # Unmount the old CD image
 sudo umount $CDSOURCEDIR
-
